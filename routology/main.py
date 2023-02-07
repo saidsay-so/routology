@@ -1,17 +1,23 @@
-from scapy.all import *
+import socket
 import networkx as nx
 import matplotlib.pyplot as plt
 
 
 def traceroute(hostname):
     hops = []
-    for i in range(1, 28):
-        pkt = IP(dst=hostname, ttl=i) / ICMP()
-        reply = sr1(pkt, verbose=0, timeout=1)
-        if reply is None:
+    ttl = 1
+    while True:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_TTL, ttl)
+        sock.settimeout(1)
+        sock.sendto(b'', (hostname, 0))
+        try:
+            _, (host, _) = sock.recvfrom(512)
+            host = host
+        except socket.timeout:
             break
-        else:
-            hops.append(reply.src)
+        hops.append(host)
+        ttl += 1
     return hops
 
 
