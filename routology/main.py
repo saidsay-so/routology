@@ -1,23 +1,54 @@
-from scapy.all import *
+import socket
 import networkx as nx
 import matplotlib.pyplot as plt
+import sys
+import time
 
 
 def traceroute(hostname):
     hops = []
-    for i in range(1, 28):
-        pkt = IP(dst=hostname, ttl=i) / ICMP()
-        reply = sr1(pkt, verbose=0, timeout=1)
-        if reply is None:
+    max_hops = 30
+    dest_addr = socket.gethostbyname(hostname)
+    port = 33434
+    icmp = socket.getprotobyname("icmp")
+    udp = socket.getprotobyname("udp")
+    ttl = 1
+    while True:
+        recv_socket = socket.socket(socket.AF_INET, socket.SOCK_RAW, icmp)
+        recv_socket.settimeout(2)
+        send_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, udp)
+        send_socket.setsockopt(socket.SOL_IP, socket.IP_TTL, ttl)
+        start_time = time.time()
+        send_socket.sendto("".encode(), (hostname, port))
+        curr_addr = None
+        curr_name = None
+        try:
+            _, curr_addr = recv_socket.recvfrom(512)
+            curr_addr = curr_addr[0]
+            try:
+                curr_name = socket.gethostbyaddr(curr_addr)[0]
+            except socket.error:
+                curr_name = curr_addr
+        except socket.error:
+            pass
+        finally:
+            send_socket.close()
+            recv_socket.close()
+
+        rtt = time.time() - start_time
+        hops.append((curr_addr, curr_name, rtt))
+
+        ttl += 1
+        if curr_addr == dest_addr or ttl > max_hops:
             break
-        else:
-            hops.append(reply.src)
+
     return hops
 
 
-hostname = "www.google.com"
+hostname = sys.argv[1]
 result = traceroute(hostname)
-print(result)
+for i, hop in enumerate(result):
+    print("{:2d} {:15s} ({:s}) {:.2f} ms".format(i + 1, hop[1], hop[0], hop[2] * 1000))
 
 G = nx.DiGraph()
 
