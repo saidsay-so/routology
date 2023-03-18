@@ -7,16 +7,27 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.12"
-scapy = "^2.5.0"
 networkx = "^3.0"
-matplotlib = "^3.6.3"
-python-whois = "^0.8.0"
+typer = "^0.7.0"
+dpkt = "^1.9.8"
+dnspython = "^2.3.0"
+aiorwlock = "^1.3.0"
+aiostream = "^0.4.5"
+
+[tool.poetry.scripts]
+routology = "routology.__main__:app"
 
 [tool.poetry.group.build.dependencies]
 pyinstaller = "^5.7.0"
 
 [tool.poetry.group.dev.dependencies]
 black = "^23.1.0"
+pytest = "^7.2.2"
+kathara = { version = "^3.5.5" } #, extras = ["pyuv"]
+pre-commit = "^3.2.0"
+
+[tool.pytest.ini_options]
+addopts = "--verbose --capture=no --color=yes"
 
 [build-system]
 requires = ["poetry-core"]
