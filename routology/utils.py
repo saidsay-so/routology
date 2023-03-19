@@ -5,9 +5,11 @@ class HostID:
     """Host IP address."""
 
     id: int
+    addr: IPv4Address | IPv6Address
 
     def __init__(self, id: int):
         self.id = id
+        self.addr = ip_address(id)
 
     @classmethod
     def from_addr(cls, addr: IPv4Address | IPv6Address) -> "HostID":
@@ -26,7 +28,7 @@ class HostID:
         return hash(self.id)
 
     def __repr__(self) -> str:
-        return f"HostID({str(self.id)})"
+        return f"HostID({self.addr})"
 
     def __str__(self) -> str:
-        return str(ip_address(self.id))
+        return str(self.addr)

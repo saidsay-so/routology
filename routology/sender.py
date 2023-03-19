@@ -39,6 +39,7 @@ class SentProbeInfo:
     probe_type: ProbeType = field(init=False)
     final: bool
 
+
 @dataclass
 class UDPProbeInfo(SentProbeInfo):
     """Information about a UDP probe."""
@@ -114,21 +115,19 @@ class HostSender:
         self._pkt_size = packet_size
         self._port = port
         self._udp_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
-        self._udp_socket.bind((str(host), 0))
 
         self._tcp_socket = socket(AF_INET, SOCK_RAW, IPPROTO_TCP)
         self._tcp_seq_getter = tcp_seq_getter
-        self._tcp_socket.bind((str(host), 0))
         self._tcp_port = self._tcp_socket.getsockname()[1]
 
         self._icmp_seq_getter = icmp_seq_getter
         self._icmp_socket = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)
-        self._icmp_socket.bind((str(host), 0))
+        self._icmp_socket.bind(("0.0.0.0", 0))
 
     async def _send_probes_serie(self, serie: int, ttl: int) -> None:
         """Send a probes serie."""
 
-        udp_port = self._port + self._ttl - 1 + serie
+        udp_port = self._port + ttl - 1 + serie
         self._udp_socket.sendto(
             b"0" * (self._pkt_size - dpkt.udp.UDP_HDR_LEN),
             (str(self.host), udp_port),
@@ -165,9 +164,9 @@ class HostSender:
                 serie=serie,
                 time=datetime.now(),
                 host=self.host,
-                sport=tcp.sport, # type: ignore
-                dport=tcp.dport, # type: ignore
-                seq=tcp.seq, # type: ignore
+                sport=tcp.sport,  # type: ignore
+                dport=tcp.dport,  # type: ignore
+                seq=tcp.seq,  # type: ignore
                 final=False,
             )
         )
@@ -202,9 +201,7 @@ class HostSender:
             )
         )
 
-    async def send_probes(self, series: int, ttls: Iterable[int]) -> None:
-        """Send series of probes."""
+    async def send_probes(self, serie: int, ttl: int) -> None:
+        """Send a serie of probes."""
 
-        await gather(
-            *(self._send_probes_serie(serie, ttl) for serie, ttl in product(range(1, series), ttls))
-        )
+        await self._send_probes_serie(serie, ttl)

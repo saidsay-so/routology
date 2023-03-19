@@ -42,8 +42,7 @@ class Dispatcher:
     """A dispatcher for received ICMP packets, which identifies the
     corresponding host and updates its list of hops."""
 
-    _subs_lock: RWLock
-    _subscriptions: dict[HostID, list[Queue[DispatchedProbeReport | None]]]
+    _subscriptions: list[Queue[DispatchedProbeReport | None]]
 
     _tcp_info_getter: Callable[[dpkt.tcp.TCP], Optional[SentProbeInfo]]
     _udp_info_getter: Callable[[dpkt.udp.UDP], Optional[SentProbeInfo]]
@@ -57,13 +56,12 @@ class Dispatcher:
 
     def __init__(
         self,
-        hosts: list[HostID],
         tcp_getter: Callable[[dpkt.tcp.TCP], Optional[SentProbeInfo]],
         udp_getter: Callable[[dpkt.udp.UDP], Optional[SentProbeInfo]],
         icmp_getter: Callable[[dpkt.icmp.ICMP], Optional[SentProbeInfo]],
         icmp6_getter: Callable[[dpkt.icmp6.ICMP6], Optional[SentProbeInfo]],
     ):
-        self._subscriptions = {host: [] for host in hosts}
+        self._subscriptions = []
         self.tasks = set()
 
         self._tcp_info_getter = tcp_getter
@@ -98,36 +96,30 @@ class Dispatcher:
         self.tasks.add(task)
         task.add_done_callback(self.tasks.remove)
 
-    async def stop_tracking_host(self, host: HostID) -> None:
-        """Stop tracking a host."""
-        for subscription in self._subscriptions[host]:
-            await subscription.put(None)
-            await subscription.join()
-        self._subscriptions.pop(host)
-
-    def subscribe(self, host: HostID) -> AsyncGenerator[DispatchedProbeReport, None]:
+    def subscribe(self) -> AsyncGenerator[DispatchedProbeReport, None]:
         """Subscribe to a host's probe reports."""
 
         q = Queue()
 
-        async def _subscribe(
-            host: HostID,
-        ) -> AsyncGenerator[DispatchedProbeReport, None]:
-            while host in self._subscriptions:
-                report = await q.get()
-                if report is None:
-                    return
-                yield report
-                q.task_done()
+        async def _subscribe() -> AsyncGenerator[DispatchedProbeReport, None]:
+            report = await q.get()
+            if report is None:
+                return
+            yield report
+            q.task_done()
 
-        self._subscriptions[host].append(q)
-        return _subscribe(host)
+        self._subscriptions.append(q)
+        return _subscribe()
 
-    def publish(self, host: HostID, report: DispatchedProbeReport) -> None:
+    def publish(self, report: DispatchedProbeReport) -> None:
         """Publish a report for a host."""
-        if host in self._subscriptions:
-            for subscription in self._subscriptions[host]:
-                subscription.put_nowait(report)
+        for subscription in self._subscriptions:
+            subscription.put_nowait(report)
+
+    def close(self) -> None:
+        """Close the dispatcher."""
+        for subscription in self._subscriptions:
+            subscription.put_nowait(None)
 
     async def dispatch_v4(self, data: bytes, addr_info: tuple[str, int]) -> None:
         """Dispatch an ICMPv4 packet."""
@@ -227,4 +219,4 @@ class Dispatcher:
             host_id,
         )
 
-        self.publish(host_id, report)
+        self.publish(report)
