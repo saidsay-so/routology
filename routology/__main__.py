@@ -1,5 +1,25 @@
-import typer
+from ipaddress import ip_address
 import asyncio
+from random import randint
+from itertools import chain
+
+from routology.collector import Collector, Hop, Node
+from routology.dispatcher import Dispatcher
+from routology.scheduler import Scheduler
+from routology.sender import (
+    ICMPProbeInfo,
+    ProbeInfo,
+    Sender,
+    TCPProbeInfo,
+    UDPProbeInfo,
+)
+from routology.utils import HostID
+
+import typer
+from scapy.layers.inet import TCP, UDP, ICMP
+from scapy.layers.inet6 import IPv6, ICMPv6TimeExceeded, ICMPv6EchoReply
+from networkx import DiGraph
+from pyvis.network import Network
 
 app = typer.Typer()
 
@@ -76,7 +96,7 @@ def main(
         0, "-Q", "--flow-label", help="Set the IPv6 flow label in probe packets"
     ),
     wait: tuple[int, int, int] = typer.Option(
-        (1, 0, 0),
+        (5, 3, 10),
         "-w",
         "--wait",
         help="""Wait for a probe no more than HERE times longer than a response from the same hop,
@@ -156,11 +176,176 @@ def main(
         help="The size of the packet to send",
     ),
 ) -> None:
-    asyncio.run(_main())
+    import logging
+    import sys
+
+    root = logging.getLogger()
+    root.setLevel(logging.DEBUG)
+
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    handler.setFormatter(formatter)
+    root.addHandler(handler)
+
+    asyncio.run(
+        _main(
+            ipv4=ipv4,
+            ipv6=ipv6,
+            debug=debug,
+            dont_fragment=dont_fragment,
+            first_ttl=first_ttl,
+            gateway=gateway,
+            max_hops=max_hops,
+            sim_queries=sim_queries,
+            no_dns=no_dns,
+            tcp_port=tcp_port,
+            udp_port=udp_port,
+            tos=tos,
+            flow_label=flow_label,
+            wait=wait,
+            queries=queries,
+            direct=direct,
+            source_address=source_address,
+            sendwait=sendwait,
+            extension=extension,
+            as_lookup=as_lookup,
+            mtu=mtu,
+            back=back,
+            hosts_file=hosts_file,
+            size=size,
+        )
+    )
 
 
-async def _main():
-    pass
+def get_hosts(hosts_file: str) -> list[HostID]:
+    hosts = []
+    with open(hosts_file) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            try:
+                hosts.append(HostID.from_addr(ip_address(line)))
+            except ValueError:
+                continue
+
+    return hosts
+
+
+def get_tcp_info(infos: list[ProbeInfo], probe: TCP) -> ProbeInfo | None:
+    tcp_probes = (info for info in infos if isinstance(info, TCPProbeInfo))
+
+    return next(
+        (
+            info
+            for info in tcp_probes
+            if info.sport == probe.sport
+            and info.dport == probe.dport
+            and info.seq == probe.seq
+        ),
+        None,
+    )
+
+
+def get_udp_info(infos: list[ProbeInfo], probe: UDP) -> ProbeInfo | None:
+    udp_probes = (info for info in infos if isinstance(info, UDPProbeInfo))
+
+    return next(
+        (
+            info
+            for info in udp_probes
+            if info.sport == probe.sport and info.dport == probe.dport
+        ),
+        None,
+    )
+
+
+def get_icmp_info(infos: list[ProbeInfo], id: int, probe: ICMP) -> ProbeInfo | None:
+    icmp_probes = (info for info in infos if isinstance(info, ICMPProbeInfo))
+
+    return next(
+        (info for info in icmp_probes if info.id == id and info.seq == probe.seq),
+        None,
+    )
+
+
+async def _main(
+    ipv4: bool,
+    ipv6: bool,
+    debug: bool,
+    dont_fragment: bool,
+    first_ttl: int,
+    gateway: str,
+    max_hops: int,
+    sim_queries: int,
+    no_dns: bool,
+    tcp_port: int,
+    udp_port: int,
+    tos: int,
+    flow_label: int,
+    wait: tuple[int, int, int],
+    queries: int,
+    direct: bool,
+    source_address: str,
+    sendwait: float,
+    extension: bool,
+    as_lookup: bool,
+    mtu: bool,
+    back: bool,
+    hosts_file: str,
+    size: int,
+) -> None:
+    loop = asyncio.get_event_loop()
+    hosts = get_hosts(hosts_file)
+    probes_info: list[ProbeInfo] = []
+    icmp_id = randint(0, 2**16 - 1)
+    dispatcher = Dispatcher(
+        lambda p: get_tcp_info(probes_info, p),
+        lambda p: get_udp_info(probes_info, p),
+        lambda p: get_icmp_info(probes_info, icmp_id, p),
+        lambda x: None,
+    )
+
+    collector = Collector(
+        hosts=hosts,
+        dispatcher=dispatcher,
+        max_hops=max_hops,
+        max=wait[0],
+        near=wait[1],
+        here=wait[2],
+        series=queries,
+        send_wait=sendwait,
+        sim_probes=sim_queries,
+    )
+    scheduler = Scheduler(
+        hosts=hosts,
+        dispatcher=dispatcher,
+        sender=Sender(probes_info.append, loop, icmp_id=icmp_id),
+    )
+
+    _, _, collected = await asyncio.gather(
+        scheduler.run(), dispatcher.run(), collector.run()
+    )
+    # loop.run_until_complete(loop.shutdown_asyncgens())
+    G = DiGraph()
+    G.add_node("host")
+    for host in collected:
+        for i, hop in enumerate(collected[host].hops):
+            if not hop:
+                G.add_node(f"Node {i} ({str(host)})")
+            else:
+                for node in hop.nodes:
+                    G.add_node(
+                        node.tcp_probe.node_ip if node else f"Node {i} ({str(host)})"
+                    )
+                    G.add_edge(node, f"Node {i} ({str(host)})")
+
+    nt = Network("500px", "500px")
+    nt.from_nx(G)
+    nt.show("test.html")
 
 
 app()

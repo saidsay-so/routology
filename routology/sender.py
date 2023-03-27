@@ -4,22 +4,13 @@ import struct
 from asyncio import gather
 from dataclasses import dataclass, field
 from datetime import datetime
-from itertools import product
+from itertools import groupby, product
 from random import randint
-from socket import (
-    AF_INET,
-    IP_TTL,
-    IPPROTO_ICMP,
-    IPPROTO_IP,
-    IPPROTO_TCP,
-    IPPROTO_UDP,
-    SOCK_DGRAM,
-    SOCK_RAW,
-    socket,
-)
 from typing import TYPE_CHECKING
+from logging import getLogger
 
-import dpkt
+from scapy.all import send, PacketList, RandShort, conf as scapy_conf
+from scapy.layers.inet import IP, UDP, TCP, ICMP
 
 from routology.probe import ProbeType
 from routology.utils import HostID
@@ -27,17 +18,20 @@ from routology.utils import HostID
 if TYPE_CHECKING:
     from asyncio import AbstractEventLoop
     from typing import Callable, Iterable
+    from logging import Logger
+
+scapy_conf.verb = 0
 
 
 @dataclass
 class SentProbeInfo:
     """Information about a probe."""
 
+    ttl: int
     serie: int
     time: datetime
     host: HostID
     probe_type: ProbeType = field(init=False)
-    final: bool
 
 
 @dataclass
@@ -46,7 +40,6 @@ class UDPProbeInfo(SentProbeInfo):
 
     dport: int
     sport: int
-    length: int
     probe_type = ProbeType.UDP
 
 
@@ -64,8 +57,6 @@ class TCPProbeInfo(SentProbeInfo):
 class ICMPProbeInfo(SentProbeInfo):
     """Information about an ICMP probe."""
 
-    type: int
-    code: int
     id: int
     seq: int
     probe_type = ProbeType.ICMP
@@ -74,134 +65,166 @@ class ICMPProbeInfo(SentProbeInfo):
 ProbeInfo = UDPProbeInfo | TCPProbeInfo | ICMPProbeInfo
 
 
-class HostSender:
-    """A sender for a single host."""
+@dataclass
+class SendRequest:
+    """A request to send probes."""
 
+    ttl: int
+    serie: int
     host: HostID
-    """The host ID of the host."""
+
+
+class Sender:
+    """A sender which can send multiple probes."""
 
     _probe_info_collector: Callable[[ProbeInfo], None]
 
-    _udp_socket: socket
-    _unique_udp_ports: bool
+    _udp_sport: int
+    _unified_udp_sport: bool
 
-    _tcp_socket: socket
+    _tcp_sport: int
+    _tcp_dport: int
+
+    _udp_dport: int
+    _unified_udp_dport: bool
+
+    _id: int
     _tcp_seq_getter: Callable[[], int]
-
-    _icmp_socket: socket
     _icmp_seq_getter: Callable[[], int]
 
-    _ttl: int
-    _pkt_size: int
-    """Packet size in bytes, including layer 4 headers."""
+    _logger: Logger
 
     def __init__(
         self,
-        host: HostID,
         probe_info_collector: Callable[[ProbeInfo], None],
         event_loop: AbstractEventLoop,
         packet_size: int = 20,
-        ttl: int = 1,
-        port: int = 33434,
-        unique_udp_ports: bool = False,
+        udp_sport: int = randint(2048, 65535),
+        unified_udp_sport: bool = False,
+        udp_dport: int = randint(2048, 65535),
+        unified_udp_dport: bool = False,
+        tcp_sport: int = randint(2048, 65535),
+        tcp_dport: int = randint(2048, 65535),
         tcp_seq_getter: Callable[[], int] = lambda: randint(0, 2**32),
         icmp_seq_getter: Callable[[], int] = lambda: randint(0, 2**16),
+        icmp_id: int = randint(0, 2**16),
+        logger: Logger | None = None,
     ):
-        self.host = host
+        self._id = icmp_id
         self._loop = event_loop
-        self._unique_udp_ports = unique_udp_ports
         self._probe_info_collector = probe_info_collector
-        self._ttl = ttl
         self._pkt_size = packet_size
-        self._port = port
-        self._udp_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
 
-        self._tcp_socket = socket(AF_INET, SOCK_RAW, IPPROTO_TCP)
+        self._udp_sport = udp_sport
+        self._unified_udp_sport = unified_udp_sport
+
+        self._udp_dport = udp_dport
+        self._unified_udp_dport = unified_udp_dport
+
+        self._tcp_sport = tcp_sport
+        self._tcp_dport = tcp_dport
+
         self._tcp_seq_getter = tcp_seq_getter
-        self._tcp_port = self._tcp_socket.getsockname()[1]
-
         self._icmp_seq_getter = icmp_seq_getter
-        self._icmp_socket = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)
-        self._icmp_socket.bind(("0.0.0.0", 0))
 
-    async def _send_probes_serie(self, serie: int, ttl: int) -> None:
-        """Send a probes serie."""
+        self._logger = logger or getLogger(__name__)
 
-        udp_port = self._port + ttl - 1 + serie
-        self._udp_socket.sendto(
-            b"0" * (self._pkt_size - dpkt.udp.UDP_HDR_LEN),
-            (str(self.host), udp_port),
-        )
-
-        sport = self._udp_socket.getsockname()[1]
-
-        self._probe_info_collector(
-            UDPProbeInfo(
-                serie=serie,
-                time=datetime.now(),
-                host=self.host,
-                sport=sport,
-                dport=udp_port,
-                length=self._pkt_size,
-                final=False,
-            )
-        )
-
-        tcp_data = b"0" * (self._pkt_size - 20)
-        tcp = dpkt.tcp.TCP(
-            dport=self._port,
-            sport=self._tcp_port,
-            seq=self._tcp_seq_getter(),
-            data=tcp_data,
-        )
-        self._tcp_socket.sendto(
-            bytes(tcp),
-            (str(self.host), self._port),
-        )
-
-        self._probe_info_collector(
-            TCPProbeInfo(
-                serie=serie,
-                time=datetime.now(),
-                host=self.host,
-                sport=tcp.sport,  # type: ignore
-                dport=tcp.dport,  # type: ignore
-                seq=tcp.seq,  # type: ignore
-                final=False,
-            )
-        )
-
-        icmp_data = dpkt.icmp.ICMP.Echo(
-            id=self._port, seq=self._icmp_seq_getter, data=b"0" * (self._pkt_size - 8)
-        )
-        icmp_cksum = dpkt.dpkt.in_cksum_add(
-            0, struct.pack("!HH", dpkt.icmp.ICMP_ECHO, 0)
-        )
-        icmp_cksum = dpkt.dpkt.in_cksum_add(icmp_cksum, bytes(icmp_data))
-        icmp_cksum = dpkt.dpkt.in_cksum_done(icmp_cksum)
-
-        icmp = dpkt.icmp.ICMP(
-            type=dpkt.icmp.ICMP_ECHO,
-            code=0,
-            sum=icmp_cksum,
-            data=icmp_data,
-        )
-        self._icmp_socket.sendto(bytes(icmp), (str(self.host), 0))
-
-        self._probe_info_collector(
-            ICMPProbeInfo(
-                serie=serie,
-                time=datetime.now(),
-                host=self.host,
-                type=dpkt.icmp.ICMP_ECHO,
-                code=0,
-                id=icmp_data.id,  # type: ignore
-                seq=icmp_data.seq,  # type: ignore
-                final=False,
-            )
-        )
-
-    async def send_probes(self, serie: int, ttl: int) -> None:
+    async def send_probes(
+        self, entries: list[SendRequest], pkt_send_time: int = 0
+    ) -> None:
         """Send a serie of probes."""
+        if not entries:
+            return
 
-        await self._send_probes_serie(serie, ttl)
+        probes = []
+        data = "0" * (self._pkt_size - 8)
+        for host, reqs in groupby(entries, lambda req: req.host):
+            reqs = list(reqs)
+            ttls = [req.ttl for req in reqs]
+            ip = IP(dst=str(host.addr), ttl=ttls)
+
+            udp_dports = (
+                [req.serie + req.ttl - 1 + self._udp_dport for req in reqs]
+                if not self._unified_udp_sport
+                else [self._udp_dport for _ in reqs]
+            )
+            udp_sport = (
+                self._udp_sport if self._unified_udp_sport else randint(2048, 65535)
+            )
+            probes.append(
+                ip
+                / UDP(
+                    dport=udp_dports,
+                    sport=udp_sport,
+                )
+                / data
+            )
+
+            icmp_seqs = [self._icmp_seq_getter() for _ in reqs]
+            probes.append(
+                ip
+                / ICMP(
+                    type=8,
+                    code=0,
+                    id=self._id,
+                    seq=icmp_seqs,
+                )
+                / data
+            )
+
+            tcp_seqs = [self._tcp_seq_getter() for _ in reqs]
+            probes.append(
+                ip
+                / TCP(
+                    dport=self._tcp_dport,
+                    sport=self._tcp_sport,
+                    seq=tcp_seqs,
+                    flags="S",
+                )
+            )
+
+            for ttl in ttls:
+                for serie, udp_port, tcp_seq, icmp_seq in zip(
+                    [req.serie for req in reqs], udp_dports, tcp_seqs, icmp_seqs
+                ):
+                    self._probe_info_collector(
+                        UDPProbeInfo(
+                            ttl=ttl,
+                            serie=serie,
+                            time=datetime.now(),
+                            host=host,
+                            sport=udp_sport,
+                            dport=udp_port,
+                        )
+                    )
+
+                    self._probe_info_collector(
+                        TCPProbeInfo(
+                            ttl=ttl,
+                            serie=serie,
+                            time=datetime.now(),
+                            host=host,
+                            sport=self._tcp_sport,
+                            dport=self._tcp_dport,
+                            seq=tcp_seq,
+                        )
+                    )
+
+                    self._probe_info_collector(
+                        ICMPProbeInfo(
+                            ttl=ttl,
+                            serie=serie,
+                            time=datetime.now(),
+                            host=host,
+                            id=self._id,
+                            seq=icmp_seq,
+                        )
+                    )
+
+        self._logger.debug(
+            "Sending probes to %s",
+            ", ".join((str(probe.host) for probe in entries)),
+        )
+        self._loop.run_in_executor(
+            None, lambda: send(PacketList(probes), inter=pkt_send_time, verbose=False)
+        )

@@ -1,28 +1,26 @@
 from __future__ import annotations
 
-from socket import (
-    AF_INET,
-    IPPROTO_ICMP,
-    IPPROTO_ICMPV6,
-    SOCK_RAW,
-    socket,
-)
 from asyncio import Queue, get_event_loop, create_task
-from aiorwlock import RWLock
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 from ipaddress import ip_address
 import dpkt
 from datetime import datetime, timedelta
+from logging import getLogger
+
+from scapy.all import AsyncSniffer
+from scapy.layers.inet import IP, UDP, TCP, ICMP, Ether
+from scapy.layers.inet6 import IPv6, ICMPv6TimeExceeded, ICMPv6EchoReply
 
 from routology.probe import ProbeType
-from routology.sender import SentProbeInfo
+from routology.sender import ProbeInfo
 from routology.utils import HostID
 
 if TYPE_CHECKING:
-    from typing import Optional, Callable, AsyncGenerator, Coroutine
+    from typing import Optional, Callable, AsyncGenerator
     from asyncio import AbstractEventLoop, Task
     from ipaddress import IPv4Address, IPv6Address
+    from logging import Logger
 
 
 @dataclass
@@ -44,25 +42,30 @@ class Dispatcher:
 
     _subscriptions: list[Queue[DispatchedProbeReport | None]]
 
-    _tcp_info_getter: Callable[[dpkt.tcp.TCP], Optional[SentProbeInfo]]
-    _udp_info_getter: Callable[[dpkt.udp.UDP], Optional[SentProbeInfo]]
-    _icmp_info_getter: Callable[[dpkt.icmp.ICMP], Optional[SentProbeInfo]]
-    _icmp6_info_getter: Callable[[dpkt.icmp6.ICMP6], Optional[SentProbeInfo]]
+    _tcp_info_getter: Callable[[TCP], Optional[ProbeInfo]]
+    _udp_info_getter: Callable[[UDP], Optional[ProbeInfo]]
+    _icmp_info_getter: Callable[[ICMP], Optional[ProbeInfo]]
+    _icmp6_info_getter: Callable[[ICMPv6EchoReply], Optional[ProbeInfo]]
 
     tasks: set[Task]
 
-    _sockv4: socket
     _loop: AbstractEventLoop
+    _sniffer: AsyncSniffer
+
+    _logger: Logger
 
     def __init__(
         self,
-        tcp_getter: Callable[[dpkt.tcp.TCP], Optional[SentProbeInfo]],
-        udp_getter: Callable[[dpkt.udp.UDP], Optional[SentProbeInfo]],
-        icmp_getter: Callable[[dpkt.icmp.ICMP], Optional[SentProbeInfo]],
-        icmp6_getter: Callable[[dpkt.icmp6.ICMP6], Optional[SentProbeInfo]],
+        tcp_getter: Callable[[TCP], Optional[ProbeInfo]],
+        udp_getter: Callable[[UDP], Optional[ProbeInfo]],
+        icmp_getter: Callable[[ICMP], Optional[ProbeInfo]],
+        icmp6_getter: Callable[
+            [ICMPv6EchoReply | ICMPv6TimeExceeded], Optional[ProbeInfo]
+        ],
     ):
         self._subscriptions = []
         self.tasks = set()
+        self._stop = False
 
         self._tcp_info_getter = tcp_getter
         self._udp_info_getter = udp_getter
@@ -70,31 +73,15 @@ class Dispatcher:
         self._icmp6_info_getter = icmp6_getter
 
         self._loop = get_event_loop()
-        self._sockv4 = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)
-        self._sockv4.bind(("0.0.0.0", 0))
+        self._logger = getLogger(__name__)
 
-        self._loop.add_reader(
-            self._sockv4,
-            lambda: self._fire_background_task(
-                self.dispatch_v4(*self._sockv4.recvfrom(1024))
-            ),
+        self._sniffer = AsyncSniffer(
+            store=False,
+            prn=self._dispatch_packet,
+            quiet=True,
+            filter="tcp[tcpflags] == tcp-rst or icmp[icmptype] == icmp-echoreply or icmp[icmptype] == icmp-timxceed or icmp6[icmptype] == icmp6-echoreply or icmp6[icmptype] == icmp6-timeexceeded",
         )
-
-        self._sockv6 = socket(AF_INET, SOCK_RAW, IPPROTO_ICMPV6)
-        self._sockv6.bind(("::", 0))
-
-        self._loop.add_reader(
-            self._sockv6,
-            lambda: self._fire_background_task(
-                self.dispatch_v6(*self._sockv6.recvfrom(1024))
-            ),
-        )
-
-    def _fire_background_task(self, coro: Coroutine) -> None:
-        """Fire-and-forget a coroutine."""
-        task = create_task(coro)
-        self.tasks.add(task)
-        task.add_done_callback(self.tasks.remove)
+        self._sniffer.start()
 
     def subscribe(self) -> AsyncGenerator[DispatchedProbeReport, None]:
         """Subscribe to a host's probe reports."""
@@ -102,108 +89,87 @@ class Dispatcher:
         q = Queue()
 
         async def _subscribe() -> AsyncGenerator[DispatchedProbeReport, None]:
-            report = await q.get()
-            if report is None:
-                return
-            yield report
-            q.task_done()
+            while not self._stop:
+                report = await q.get()
+                if report is None:
+                    return
+
+                yield report
 
         self._subscriptions.append(q)
-        return _subscribe()
+        s = _subscribe()
+        s.asend(None)
+        return s
 
     def publish(self, report: DispatchedProbeReport) -> None:
         """Publish a report for a host."""
         for subscription in self._subscriptions:
             subscription.put_nowait(report)
 
-    def close(self) -> None:
+    async def run(self) -> None:
+        """Run the dispatcher."""
+        await self._loop.run_in_executor(None, self._sniffer.join)
+        self._logger.debug("Sniffer stopped, closing dispatcher")
+
+    async def close(self) -> None:
         """Close the dispatcher."""
+        self._stop = True
+        self._sniffer.stop()
+
         for subscription in self._subscriptions:
             subscription.put_nowait(None)
+            self._logger.debug("Closing subscription")
 
-    async def dispatch_v4(self, data: bytes, addr_info: tuple[str, int]) -> None:
+    def _dispatch_packet(self, pkt: Ether) -> None:
         """Dispatch an ICMPv4 packet."""
-        pkt = cast(dpkt.icmp.ICMP, dpkt.ip.IP(data).data)
-        addr, _ = addr_info
-        addr = ip_address(addr)
-        match pkt.type, pkt.code:  # type: ignore
-            case dpkt.icmp.ICMP_TIMEXCEED, dpkt.icmp.ICMP_TIMEXCEED_INTRANS:
-                # We've reached a hop
-                ip = cast(dpkt.ip.IP, pkt.data)
-                ttl = ip.ttl  # type: ignore
-                match ip.data:
-                    case dpkt.tcp.TCP() as tcp:
-                        probe_info = self._tcp_info_getter(tcp)
-                        if probe_info:
-                            self._add_to_queue(
-                                ttl,
-                                addr,
-                                probe_info,
-                                ProbeType.TCP,
-                            )
-                    case dpkt.udp.UDP() as udp:
-                        probe_info = self._udp_info_getter(udp)
-                        if probe_info:
-                            self._add_to_queue(
-                                ttl,
-                                addr,
-                                probe_info,
-                                ProbeType.UDP,
-                            )
-                    case dpkt.icmp.ICMP() as icmp:
-                        probe_info = self._icmp_info_getter(icmp)
-                        if probe_info:
-                            self._add_to_queue(
-                                ttl,
-                                addr,
-                                probe_info,
-                                ProbeType.ICMP,
-                            )
+        if not IP in pkt:
+            return
 
-    async def dispatch_v6(self, data: bytes, addr_info: tuple[str, int]) -> None:
-        """Dispatch an ICMPv6 packet."""
-        pkt = cast(dpkt.icmp6.ICMP6, dpkt.ip6.IP6(data).data)
-        addr, _ = addr_info
-        addr = ip_address(addr)
-        match pkt.type, pkt.code:  # type: ignore
-            case dpkt.icmp6.ICMP6_TIME_EXCEEDED, 0:
-                # We've reached a hop
-                ip = cast(dpkt.ip6.IP6, pkt.data)
-                ttl = ip.hlim  # type: ignore
-                match ip.data:
-                    case dpkt.tcp.TCP() as tcp:
-                        probe_info = self._tcp_info_getter(tcp)
-                        if probe_info:
-                            self._add_to_queue(
-                                ttl,
-                                addr,
-                                probe_info,
-                                ProbeType.TCP,
-                            )
-                    case dpkt.udp.UDP() as udp:
-                        probe_info = self._udp_info_getter(udp)
-                        if probe_info:
-                            self._add_to_queue(
-                                ttl,
-                                addr,
-                                probe_info,
-                                ProbeType.UDP,
-                            )
-                    case dpkt.icmp6.ICMP6() as icmp:
-                        probe_info = self._icmp6_info_getter(icmp)
-                        if probe_info:
-                            self._add_to_queue(
-                                ttl,
-                                addr,
-                                probe_info,
-                                ProbeType.ICMP6,
-                            )
+        ip: IP = pkt[IP]
+        addr = ip_address(ip.src)
+        self._logger.debug("Packet from %s", addr)
+
+        match ip.payload:
+            case ICMP() as icmp:
+                match icmp.type, icmp.code:
+                    case 11, 0:
+                        # We've reached a hop
+                        previous_ip = cast(IP, icmp.payload)
+                        ttl = previous_ip.ttl
+                        match previous_ip.payload:
+                            case TCP() as tcp:
+                                probe_info = self._tcp_info_getter(tcp)
+                                if probe_info:
+                                    self._add_to_queue(
+                                        ttl,
+                                        addr,
+                                        probe_info,
+                                        ProbeType.TCP,
+                                    )
+                            case UDP() as udp:
+                                probe_info = self._udp_info_getter(udp)
+                                if probe_info:
+                                    self._add_to_queue(
+                                        ttl,
+                                        addr,
+                                        probe_info,
+                                        ProbeType.UDP,
+                                    )
+                            case ICMP() as icmp:
+                                probe_info = self._icmp_info_getter(icmp)
+                                if probe_info:
+                                    self._add_to_queue(
+                                        ttl,
+                                        addr,
+                                        probe_info,
+                                        ProbeType.ICMP,
+                                    )
 
     def _add_to_queue(
         self,
         ttl: int,
         addr: IPv4Address | IPv6Address,
-        probe_info: SentProbeInfo,
+        probe_info: ProbeInfo,
         probe_type: ProbeType,
     ) -> None:
         """Add a report to the appropriate queue if available."""
@@ -219,4 +185,10 @@ class Dispatcher:
             host_id,
         )
 
+        self._logger.debug(
+            "Dispatching report for host %s: %s with TTL %d",
+            host_id,
+            report,
+            ttl,
+        )
         self.publish(report)

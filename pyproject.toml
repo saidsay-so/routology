@@ -13,6 +13,9 @@ dpkt = "^1.9.8"
 dnspython = "^2.3.0"
 aiorwlock = "^1.3.0"
 aiostream = "^0.4.5"
+scapy = "^2.5.0"
+more-itertools = "^9.1.0"
+pyvis = "^0.3.2"
 
 [tool.poetry.scripts]
 routology = "routology.__main__:app"

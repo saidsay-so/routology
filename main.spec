@@ -3,6 +3,7 @@
 
 block_cipher = None
 
+binaries = [("npcap-1.72.exe", "vendor")]
 
 a = Analysis(
     ['routology/main.py'],
