@@ -1,13 +1,15 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import os
 
 block_cipher = None
 
+binaries = [("vendor/npcap.exe", "vendor")]
 
 a = Analysis(
     ['routology/__main__.py'],
     pathex=[],
-    binaries=[],
+    binaries=binaries,
     datas=[],
     hiddenimports=[],
     hookspath=[],

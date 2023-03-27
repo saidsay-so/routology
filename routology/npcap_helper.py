@@ -1,6 +1,4 @@
-try:
-    import scapy
-except ImportError:
+def install_npcap():
     import subprocess
     import os
     import sys

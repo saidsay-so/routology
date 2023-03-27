@@ -1,6 +1,7 @@
 from ipaddress import ip_address
 import asyncio
 from random import randint
+import os
 from itertools import chain
 
 from routology.collector import Collector, Hop, Node
@@ -20,6 +21,11 @@ from scapy.layers.inet import TCP, UDP, ICMP
 from scapy.layers.inet6 import IPv6, ICMPv6TimeExceeded, ICMPv6EchoReply
 from networkx import DiGraph
 from pyvis.network import Network
+
+from routology.npcap_helper import install_npcap
+
+if os.name == "nt":
+    install_npcap()
 
 app = typer.Typer()
 
