@@ -4,10 +4,10 @@ import os
 
 block_cipher = None
 
-binaries = [("vendor/npcap.exe", "vendor")]
+binaries = [("vendor/npcap.exe", "vendor")] if os.name == "nt" else []
 
 a = Analysis(
-    ['routology/__main__.py'],
+    ["routology/__main__.py"],
     pathex=[],
     binaries=binaries,
     datas=[],
@@ -30,7 +30,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='routology',
+    name="routology",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
