@@ -16,9 +16,13 @@ from routology.sender import (
 )
 from routology.utils import HostID
 
+if os.name == "nt":
+    import os.path
+
+    if not os.path.isfile("C:\\Program Files\\Npcap\\NPFInstall.exe"):
 from routology.npcap_helper import install_npcap
 
-if os.name == "nt":
+        print("Npcap is not installed, installing it now...")
     install_npcap()
 
 import typer
