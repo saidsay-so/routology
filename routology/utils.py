@@ -6,7 +6,7 @@ from asyncio import wait_for
 from aiostream import streamcontext, operator
 from aiostream.aiter_utils import anext
 
-from logging import getLogger
+from socket import gethostbyname
 
 from typing import TYPE_CHECKING
 
@@ -43,11 +43,17 @@ class HostID:
     def __init__(self, id: int):
         self.id = id
         self.addr = ip_address(id)
+        self.name = None
 
     @classmethod
     def from_addr(cls, addr: IPv4Address | IPv6Address) -> "HostID":
         """Get host ID from an IP address."""
         return cls(int(addr))
+
+    @classmethod
+    def from_name(cls, host: str) -> "HostID":
+        """Get host ID from a hostname (IPv4 only)."""
+        return cls(int(ip_address(gethostbyname(host))))
 
     def __int__(self) -> int:
         return self.id

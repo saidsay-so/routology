@@ -227,18 +227,25 @@ def main(
 
 
 def get_hosts(hosts_file: str) -> list[HostID]:
-    hosts = []
+    import logging
+
+    hosts = set()
+    logger = logging.getLogger(__name__)
     with open(hosts_file) as f:
         for line in f:
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
             try:
-                hosts.append(HostID.from_addr(ip_address(line)))
+                hosts.add(HostID.from_addr(ip_address(line)))
             except ValueError:
-                continue
+                # TODO: IPv6 support?
+                hosts.add(HostID.from_name(line))
+            except:
+                logger.warning(f"Invalid host: {line}")
+                raise
 
-    return hosts
+    return list(hosts)
 
 
 def get_tcp_info(infos: list[ProbeInfo], probe: TCP) -> ProbeInfo | None:
