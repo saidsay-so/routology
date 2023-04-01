@@ -20,10 +20,10 @@ if os.name == "nt":
     import os.path
 
     if not os.path.isfile("C:\\Program Files\\Npcap\\NPFInstall.exe"):
-from routology.npcap_helper import install_npcap
+        from routology.npcap_helper import install_npcap
 
         print("Npcap is not installed, installing it now...")
-    install_npcap()
+        install_npcap()
 
 import typer
 from scapy.layers.inet import TCP, UDP, ICMP
@@ -319,6 +319,7 @@ async def _main(
     hosts = get_hosts(hosts_file)
     probes_info: list[ProbeInfo] = []
     icmp_id = randint(0, 2**16 - 1)
+
     dispatcher = Dispatcher(
         lambda p: get_tcp_info(probes_info, p),
         lambda p: get_udp_info(probes_info, p),
@@ -330,9 +331,7 @@ async def _main(
         hosts=hosts,
         dispatcher=dispatcher,
         max_hops=max_hops,
-        max=wait[0],
-        near=wait[1],
-        here=wait[2],
+        delay=wait[0],
         series=queries,
         send_wait=sendwait,
         sim_probes=sim_queries,
@@ -341,6 +340,11 @@ async def _main(
         hosts=hosts,
         dispatcher=dispatcher,
         sender=Sender(probes_info.append, loop, icmp_id=icmp_id),
+        send_wait=sendwait,
+        series=queries,
+        sim_probes=sim_queries,
+        max_hops=max_hops,
+        finished_callback=collector.start_timeout,
     )
 
     _, _, collected = await asyncio.gather(
@@ -348,21 +352,29 @@ async def _main(
     )
     # loop.run_until_complete(loop.shutdown_asyncgens())
     G = DiGraph()
-    G.add_node("host")
+    root = "host"
+    G.add_node(root, size=10)
     for host in collected:
-        for i, hop in enumerate(collected[host].hops):
-            if not hop:
-                G.add_node(f"Node {i} ({str(host)})")
-            else:
-                for node in hop.nodes:
-                    G.add_node(
-                        node.tcp_probe.node_ip if node else f"Node {i} ({str(host)})"
-                    )
-                    G.add_edge(node, f"Node {i} ({str(host)})")
+        for hops_type, hops in map(
+            lambda attr: (
+                attr,
+                map(lambda hop: getattr(hop, "nodes", None), collected[host].hops),
+            ),
+            ("tcp_probe", "udp_probe", "icmp_probe"),
+        ):
+            prev = root
+            current = None
+            for i, hop in enumerate(hops):
+                weight = hop.rtt if hop else 1
+                label = f"{hop.rtt}ms" if hop else "N/A"
+                current = hop.addr if hop else f"Unknown hop {i}"
+                G.add_node(current)
+                G.add_edge(prev, current, weight=weight, label=label)
+                prev = current
 
-    nt = Network("500px", "500px")
+    nt = Network("1080px")
     nt.from_nx(G)
-    nt.show("test.html")
+    nt.show("test.html", notebook=False)
 
 
 app()

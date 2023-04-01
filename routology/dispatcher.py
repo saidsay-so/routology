@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from asyncio import Queue, get_event_loop, create_task
+from asyncio import Queue, get_event_loop
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 from ipaddress import ip_address
-import dpkt
 from datetime import datetime, timedelta
 from logging import getLogger
 
@@ -33,7 +32,7 @@ class DispatchedProbeReport:
     node_ip: IPv4Address | IPv6Address
     rtt: float
     host_id: HostID
-    """The host ID of the probe."""
+    final: bool
 
 
 class Dispatcher:
@@ -62,6 +61,7 @@ class Dispatcher:
         icmp6_getter: Callable[
             [ICMPv6EchoReply | ICMPv6TimeExceeded], Optional[ProbeInfo]
         ],
+        logger: Optional[Logger] = None,
     ):
         self._subscriptions = []
         self.tasks = set()
@@ -73,13 +73,15 @@ class Dispatcher:
         self._icmp6_info_getter = icmp6_getter
 
         self._loop = get_event_loop()
-        self._logger = getLogger(__name__)
+        self._logger = logger or getLogger(self.__class__.__name__)
 
         self._sniffer = AsyncSniffer(
             store=False,
             prn=self._dispatch_packet,
             quiet=True,
-            filter="tcp[tcpflags] == tcp-rst or icmp[icmptype] == icmp-echoreply or icmp[icmptype] == icmp-timxceed or icmp6[icmptype] == icmp6-echoreply or icmp6[icmptype] == icmp6-timeexceeded",
+            filter="""tcp[tcpflags] == tcp-rst
+            or icmp[icmptype] == icmp-echoreply or icmp[icmptype] == icmp-timxceed or icmp[icmptype] == icmp-unreach
+            or icmp6[icmptype] == icmp6-echoreply or icmp6[icmptype] == icmp6-timeexceeded""",
         )
         self._sniffer.start()
 
@@ -130,18 +132,28 @@ class Dispatcher:
         self._logger.debug("Packet from %s", addr)
 
         match ip.payload:
+            case TCP() as tcp:
+                # We've reached the destination
+                probe_info = self._tcp_info_getter(tcp)
+                if probe_info:
+                    self._add_to_queue(addr, probe_info, ProbeType.TCP, True)
+
             case ICMP() as icmp:
                 match icmp.type, icmp.code:
+                    case 0, 0:
+                        # We've reached the destination
+                        probe_info = self._icmp_info_getter(icmp)
+                        if probe_info:
+                            self._add_to_queue(addr, probe_info, ProbeType.ICMP, True)
+
                     case 11, 0:
                         # We've reached a hop
                         previous_ip = cast(IP, icmp.payload)
-                        ttl = previous_ip.ttl
                         match previous_ip.payload:
                             case TCP() as tcp:
                                 probe_info = self._tcp_info_getter(tcp)
                                 if probe_info:
                                     self._add_to_queue(
-                                        ttl,
                                         addr,
                                         probe_info,
                                         ProbeType.TCP,
@@ -150,7 +162,6 @@ class Dispatcher:
                                 probe_info = self._udp_info_getter(udp)
                                 if probe_info:
                                     self._add_to_queue(
-                                        ttl,
                                         addr,
                                         probe_info,
                                         ProbeType.UDP,
@@ -159,36 +170,63 @@ class Dispatcher:
                                 probe_info = self._icmp_info_getter(icmp)
                                 if probe_info:
                                     self._add_to_queue(
-                                        ttl,
                                         addr,
                                         probe_info,
                                         ProbeType.ICMP,
                                     )
 
+                    case 3, 10:
+                        # We've reached the destination
+                        # Likely a response to the UDP probe, but we can't be sure
+                        previous_ip = cast(IP, icmp.payload)
+                        match previous_ip.payload:
+                            case UDP() as udp:
+                                probe_info = self._udp_info_getter(udp)
+                                if probe_info:
+                                    self._add_to_queue(
+                                        addr,
+                                        probe_info,
+                                        ProbeType.UDP,
+                                        True,
+                                    )
+                            case TCP() as tcp:
+                                probe_info = self._tcp_info_getter(tcp)
+                                if probe_info:
+                                    self._add_to_queue(
+                                        addr,
+                                        probe_info,
+                                        ProbeType.TCP,
+                                        True,
+                                    )
+                            case ICMP() as icmp:
+                                probe_info = self._icmp_info_getter(icmp)
+                                if probe_info:
+                                    self._add_to_queue(
+                                        addr,
+                                        probe_info,
+                                        ProbeType.ICMP,
+                                        True,
+                                    )
+
     def _add_to_queue(
         self,
-        ttl: int,
         addr: IPv4Address | IPv6Address,
         probe_info: ProbeInfo,
         probe_type: ProbeType,
+        final: bool = False,
     ) -> None:
         """Add a report to the appropriate queue if available."""
         host_id = probe_info.host
         time_diff = datetime.now() - probe_info.time
         rtt = time_diff / timedelta(milliseconds=1)
         report = DispatchedProbeReport(
-            ttl,
-            probe_type,
-            probe_info.serie,
-            addr,
-            rtt,
-            host_id,
+            probe_info.ttl, probe_type, probe_info.serie, addr, rtt, host_id, final
         )
 
         self._logger.debug(
             "Dispatching report for host %s: %s with TTL %d",
             host_id,
             report,
-            ttl,
+            probe_info.ttl,
         )
         self.publish(report)

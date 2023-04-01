@@ -101,12 +101,12 @@ class Sender:
         packet_size: int = 20,
         udp_sport: int = randint(2048, 65535),
         unified_udp_sport: bool = False,
-        udp_dport: int = randint(2048, 65535),
+        udp_dport: int = 33434,
         unified_udp_dport: bool = False,
         tcp_sport: int = randint(2048, 65535),
         tcp_dport: int = randint(2048, 65535),
-        tcp_seq_getter: Callable[[], int] = lambda: randint(0, 2**32),
-        icmp_seq_getter: Callable[[], int] = lambda: randint(0, 2**16),
+        tcp_seq_getter: Callable[[], int] = lambda: randint(0, 2**32 - 1),
+        icmp_seq_getter: Callable[[], int] = lambda: randint(0, 2**16 - 1),
         icmp_id: int = randint(0, 2**16),
         logger: Logger | None = None,
     ):
@@ -129,6 +129,11 @@ class Sender:
 
         self._logger = logger or getLogger(__name__)
 
+    def _compute_udp_dport(self) -> int:
+        if not self._unified_udp_dport:
+            self._udp_dport += 1
+        return self._udp_dport
+
     async def send_probes(
         self, entries: list[SendRequest], pkt_send_time: int = 0
     ) -> None:
@@ -138,93 +143,89 @@ class Sender:
 
         probes = []
         data = "0" * (self._pkt_size - 8)
-        for host, reqs in groupby(entries, lambda req: req.host):
-            reqs = list(reqs)
-            ttls = [req.ttl for req in reqs]
-            ip = IP(dst=str(host.addr), ttl=ttls)
+        for entry in entries:
+            ttl = entry.ttl
 
-            udp_dports = (
-                [req.serie + req.ttl - 1 + self._udp_dport for req in reqs]
-                if not self._unified_udp_sport
-                else [self._udp_dport for _ in reqs]
-            )
+            udp_dport = self._compute_udp_dport()
+
             udp_sport = (
                 self._udp_sport if self._unified_udp_sport else randint(2048, 65535)
             )
             probes.append(
-                ip
+                IP(dst=str(entry.host), ttl=ttl, id=self._icmp_seq_getter())
                 / UDP(
-                    dport=udp_dports,
+                    dport=udp_dport,
                     sport=udp_sport,
                 )
                 / data
             )
 
-            icmp_seqs = [self._icmp_seq_getter() for _ in reqs]
+            self._probe_info_collector(
+                UDPProbeInfo(
+                    ttl=entry.ttl,
+                    serie=entry.serie,
+                    time=datetime.now(),
+                    host=entry.host,
+                    sport=udp_sport,
+                    dport=udp_dport,
+                )
+            )
+
+            icmp_seq = self._icmp_seq_getter()
             probes.append(
-                ip
+                IP(dst=str(entry.host), ttl=ttl, id=self._icmp_seq_getter())
                 / ICMP(
                     type=8,
                     code=0,
                     id=self._id,
-                    seq=icmp_seqs,
+                    seq=icmp_seq,
                 )
                 / data
             )
 
-            tcp_seqs = [self._tcp_seq_getter() for _ in reqs]
+            self._probe_info_collector(
+                ICMPProbeInfo(
+                    ttl=entry.ttl,
+                    serie=entry.serie,
+                    time=datetime.now(),
+                    host=entry.host,
+                    id=self._id,
+                    seq=icmp_seq,
+                )
+            )
+
+            tcp_seq = self._tcp_seq_getter()
             probes.append(
-                ip
+                IP(dst=str(entry.host), ttl=ttl, id=self._icmp_seq_getter())
                 / TCP(
                     dport=self._tcp_dport,
                     sport=self._tcp_sport,
-                    seq=tcp_seqs,
+                    seq=tcp_seq,
                     flags="S",
                 )
             )
 
-            for ttl in ttls:
-                for serie, udp_port, tcp_seq, icmp_seq in zip(
-                    [req.serie for req in reqs], udp_dports, tcp_seqs, icmp_seqs
-                ):
-                    self._probe_info_collector(
-                        UDPProbeInfo(
-                            ttl=ttl,
-                            serie=serie,
-                            time=datetime.now(),
-                            host=host,
-                            sport=udp_sport,
-                            dport=udp_port,
-                        )
-                    )
-
-                    self._probe_info_collector(
-                        TCPProbeInfo(
-                            ttl=ttl,
-                            serie=serie,
-                            time=datetime.now(),
-                            host=host,
-                            sport=self._tcp_sport,
-                            dport=self._tcp_dport,
-                            seq=tcp_seq,
-                        )
-                    )
-
-                    self._probe_info_collector(
-                        ICMPProbeInfo(
-                            ttl=ttl,
-                            serie=serie,
-                            time=datetime.now(),
-                            host=host,
-                            id=self._id,
-                            seq=icmp_seq,
-                        )
-                    )
+            self._probe_info_collector(
+                TCPProbeInfo(
+                    ttl=entry.ttl,
+                    serie=entry.serie,
+                    time=datetime.now(),
+                    host=entry.host,
+                    sport=self._tcp_sport,
+                    dport=self._tcp_dport,
+                    seq=tcp_seq,
+                )
+            )
 
         self._logger.debug(
             "Sending probes to %s",
             ", ".join((str(probe.host) for probe in entries)),
         )
-        self._loop.run_in_executor(
-            None, lambda: send(PacketList(probes), inter=pkt_send_time, verbose=False)
+        await self._loop.run_in_executor(
+            None,
+            lambda: send(
+                PacketList(probes),
+                inter=pkt_send_time,
+                verbose=False,
+            ),
         )
