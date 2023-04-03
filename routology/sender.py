@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-import struct
-from asyncio import gather
 from dataclasses import dataclass, field
 from datetime import datetime
-from itertools import groupby, product
 from random import randint
 from typing import TYPE_CHECKING
 from logging import getLogger
 
-from scapy.all import send, PacketList, RandShort, conf as scapy_conf
+from scapy.all import send, PacketList, conf as scapy_conf
 from scapy.layers.inet import IP, UDP, TCP, ICMP
 
 from routology.probe import ProbeType
@@ -17,7 +14,7 @@ from routology.utils import HostID
 
 if TYPE_CHECKING:
     from asyncio import AbstractEventLoop
-    from typing import Callable, Iterable
+    from typing import Callable
     from logging import Logger
 
 scapy_conf.verb = 0
@@ -79,6 +76,8 @@ class Sender:
 
     _probe_info_collector: Callable[[ProbeInfo], None]
 
+    _dont_fragment: bool
+
     _udp_sport: int
     _unified_udp_sport: bool
 
@@ -90,6 +89,7 @@ class Sender:
 
     _id: int
     _tcp_seq_getter: Callable[[], int]
+    _ip_id_getter: Callable[[], int]
     _icmp_seq_getter: Callable[[], int]
 
     _logger: Logger
@@ -105,9 +105,11 @@ class Sender:
         unified_udp_dport: bool = False,
         tcp_sport: int = randint(2048, 65535),
         tcp_dport: int = randint(2048, 65535),
+        ip_id_getter: Callable[[], int] = lambda: randint(0, 2**16 - 1),
         tcp_seq_getter: Callable[[], int] = lambda: randint(0, 2**32 - 1),
         icmp_seq_getter: Callable[[], int] = lambda: randint(0, 2**16 - 1),
         icmp_id: int = randint(0, 2**16),
+        dont_fragment: bool = False,
         logger: Logger | None = None,
     ):
         self._id = icmp_id
@@ -126,6 +128,9 @@ class Sender:
 
         self._tcp_seq_getter = tcp_seq_getter
         self._icmp_seq_getter = icmp_seq_getter
+        self._ip_id_getter = ip_id_getter
+
+        self._dont_fragment = dont_fragment
 
         self._logger = logger or getLogger(__name__)
 
@@ -145,6 +150,7 @@ class Sender:
         data = "0" * (self._pkt_size - 8)
         for entry in entries:
             ttl = entry.ttl
+            ip = IP(dst=str(entry.host), ttl=ttl, id=self._ip_id_getter())
 
             udp_dport = self._compute_udp_dport()
 
@@ -152,7 +158,7 @@ class Sender:
                 self._udp_sport if self._unified_udp_sport else randint(2048, 65535)
             )
             probes.append(
-                IP(dst=str(entry.host), ttl=ttl, id=self._icmp_seq_getter())
+                ip
                 / UDP(
                     dport=udp_dport,
                     sport=udp_sport,
@@ -173,7 +179,7 @@ class Sender:
 
             icmp_seq = self._icmp_seq_getter()
             probes.append(
-                IP(dst=str(entry.host), ttl=ttl, id=self._icmp_seq_getter())
+                ip
                 / ICMP(
                     type=8,
                     code=0,
@@ -196,7 +202,7 @@ class Sender:
 
             tcp_seq = self._tcp_seq_getter()
             probes.append(
-                IP(dst=str(entry.host), ttl=ttl, id=self._icmp_seq_getter())
+                ip
                 / TCP(
                     dport=self._tcp_dport,
                     sport=self._tcp_sport,
