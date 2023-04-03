@@ -36,8 +36,8 @@ class DispatchedProbeReport:
 
 
 class Dispatcher:
-    """A dispatcher for received ICMP packets, which identifies the
-    corresponding host and updates its list of hops."""
+    """A dispatcher for received packets, which identifies the
+    corresponding host and dispatch the packet if it found the host."""
 
     _subscriptions: list[Queue[DispatchedProbeReport | None]]
 

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import ceil, floor
 from typing import TYPE_CHECKING
 from logging import Logger, getLogger
 from asyncio import TimeoutError
@@ -122,7 +121,7 @@ class Collector:
     def start_timeout(self) -> None:
         """Determines the timeout for the collector."""
         self._timeout = datetime.now() + timedelta(
-            seconds=(self._delay),
+            seconds=self._delay,
         )
 
     def get_report(self) -> dict[HostID, HostReport]:
@@ -132,7 +131,7 @@ class Collector:
     def get_timeout(self) -> float:
         """Returns the timeout for the collector."""
         if self._timeout is None:
-            return 5
+            return self._delay
 
         diff = self._timeout - datetime.now()
         return max(diff.total_seconds(), 0)
@@ -140,8 +139,9 @@ class Collector:
     def _compute_timeout(self, report: DispatchedProbeReport):
         """Computes the timeout for the collector."""
         if self._timeout is not None:
-            self._timeout -= timedelta(
-                seconds=self._delay / 3,
+            self._timeout += max(
+                self._timeout - datetime.now(),
+                timedelta(milliseconds=report.rtt * report.ttl),
             )
 
     async def run(self) -> dict[HostID, HostReport]:

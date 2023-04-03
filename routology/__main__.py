@@ -2,7 +2,6 @@ from ipaddress import ip_address
 import asyncio
 from random import randint
 import os
-from itertools import chain
 
 from routology.collector import Collector, Hop, Node
 from routology.dispatcher import Dispatcher
@@ -27,9 +26,7 @@ if os.name == "nt":
 
 import typer
 from scapy.layers.inet import TCP, UDP, ICMP
-from scapy.layers.inet6 import IPv6, ICMPv6TimeExceeded, ICMPv6EchoReply
-from networkx import DiGraph
-from pyvis.network import Network
+#from scapy.layers.inet6 import IPv6, ICMPv6TimeExceeded, ICMPv6EchoReply
 
 app = typer.Typer()
 
@@ -253,13 +250,12 @@ def get_hosts(hosts_file: str) -> list[HostID]:
 
 
 def get_tcp_info(infos: list[ProbeInfo], probe: TCP) -> ProbeInfo | None:
-    tcp_probes = (info for info in infos if isinstance(info, TCPProbeInfo))
-
     return next(
         (
             info
-            for info in tcp_probes
-            if info.sport == probe.sport
+            for info in infos
+            if isinstance(info, TCPProbeInfo)
+            and info.sport == probe.sport
             and info.dport == probe.dport
             and info.seq == probe.seq
         ),
@@ -268,23 +264,27 @@ def get_tcp_info(infos: list[ProbeInfo], probe: TCP) -> ProbeInfo | None:
 
 
 def get_udp_info(infos: list[ProbeInfo], probe: UDP) -> ProbeInfo | None:
-    udp_probes = (info for info in infos if isinstance(info, UDPProbeInfo))
-
     return next(
         (
             info
-            for info in udp_probes
-            if info.sport == probe.sport and info.dport == probe.dport
+            for info in infos
+            if isinstance(info, UDPProbeInfo)
+            and info.sport == probe.sport
+            and info.dport == probe.dport
         ),
         None,
     )
 
 
 def get_icmp_info(infos: list[ProbeInfo], id: int, probe: ICMP) -> ProbeInfo | None:
-    icmp_probes = (info for info in infos if isinstance(info, ICMPProbeInfo))
-
     return next(
-        (info for info in icmp_probes if info.id == id and info.seq == probe.seq),
+        (
+            info
+            for info in infos
+            if isinstance(info, ICMPProbeInfo)
+            and info.id == id
+            and info.seq == probe.seq
+        ),
         None,
     )
 
@@ -351,30 +351,6 @@ async def _main(
         scheduler.run(), dispatcher.run(), collector.run()
     )
     # loop.run_until_complete(loop.shutdown_asyncgens())
-    G = DiGraph()
-    root = "host"
-    G.add_node(root, size=10)
-    for host in collected:
-        for hops_type, hops in map(
-            lambda attr: (
-                attr,
-                map(lambda hop: getattr(hop, "nodes", None), collected[host].hops),
-            ),
-            ("tcp_probe", "udp_probe", "icmp_probe"),
-        ):
-            prev = root
-            current = None
-            for i, hop in enumerate(hops):
-                weight = hop.rtt if hop else 1
-                label = f"{hop.rtt}ms" if hop else "N/A"
-                current = hop.addr if hop else f"Unknown hop {i}"
-                G.add_node(current)
-                G.add_edge(prev, current, weight=weight, label=label)
-                prev = current
-
-    nt = Network("1080px")
-    nt.from_nx(G)
-    nt.show("test.html", notebook=False)
 
 
 app()

@@ -46,12 +46,12 @@ class HostID:
         self.name = None
 
     @classmethod
-    def from_addr(cls, addr: IPv4Address | IPv6Address) -> "HostID":
+    def from_addr(cls, addr: IPv4Address | IPv6Address) -> HostID:
         """Get host ID from an IP address."""
         return cls(int(addr))
 
     @classmethod
-    def from_name(cls, host: str) -> "HostID":
+    def from_name(cls, host: str) -> HostID:
         """Get host ID from a hostname (IPv4 only)."""
         return cls(int(ip_address(gethostbyname(host))))
 
