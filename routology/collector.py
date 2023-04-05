@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import log
 from typing import TYPE_CHECKING
 from logging import Logger, getLogger
 from asyncio import TimeoutError
@@ -25,8 +26,8 @@ class ProbeResponse:
 
 
 @dataclass
-class Node:
-    """A report for a node, which can contain different addresses for each probe type."""
+class Hop:
+    """A report for a hop, which contains nodes for each probe type."""
 
     udp_probe: Optional[ProbeResponse] = None
     tcp_probe: Optional[ProbeResponse] = None
@@ -34,18 +35,11 @@ class Node:
 
 
 @dataclass
-class Hop:
-    """A report for a hop, which contains a list of nodes sorted by series."""
-
-    nodes: list[Optional[Node]]
-
-
-@dataclass
 class HostReport:
     """A report for a host."""
 
     addr: IPv4Address | IPv6Address
-    hops: list[Optional[Hop]]
+    series: list[list[Optional[Hop]]]
 
 
 class Collector:
@@ -72,7 +66,9 @@ class Collector:
         sim_probes: int,
         logger: Optional[Logger] = None,
     ):
-        self._hosts = {host: HostReport(host.addr, [None] * max_hops) for host in hosts}
+        self._hosts = {
+            host: HostReport(host.addr, [[None] * max_hops] * series) for host in hosts
+        }
         self._dispatcher = dispatcher
         self._subscription = dispatcher.subscribe()
 
@@ -100,23 +96,23 @@ class Collector:
         )
         host = self._hosts[report.host_id]
 
-        hop = host.hops[report.ttl - 1]
-        if hop is None:
-            hop = Hop([None] * self._series)
-            host.hops[report.ttl - 1] = hop
+        hops = host.series[report.series]
+        if hops is None:
+            hops = [None] * self._max_hops
+            host.series[report.series] = hops
 
-        node = hop.nodes[report.series]
-        if node is None:
-            node = Node()
-            hop.nodes[report.series] = node
+        hop = hops[report.ttl - 1]
+        if hop is None:
+            hop = Hop()
+            hops[report.ttl - 1] = hop
 
         match report.probe_type:
             case ProbeType.UDP:
-                node.udp_probe = ProbeResponse(report.rtt, report.node_ip)
+                hop.udp_probe = ProbeResponse(report.rtt, report.node_ip)
             case ProbeType.TCP:
-                node.tcp_probe = ProbeResponse(report.rtt, report.node_ip)
+                hop.tcp_probe = ProbeResponse(report.rtt, report.node_ip)
             case ProbeType.ICMP:
-                node.icmp_probe = ProbeResponse(report.rtt, report.node_ip)
+                hop.icmp_probe = ProbeResponse(report.rtt, report.node_ip)
 
     def start_timeout(self) -> None:
         """Determines the timeout for the collector."""
@@ -131,7 +127,7 @@ class Collector:
     def get_timeout(self) -> float:
         """Returns the timeout for the collector."""
         if self._timeout is None:
-            return self._delay
+            return 15
 
         diff = self._timeout - datetime.now()
         return max(diff.total_seconds(), 0)
@@ -141,7 +137,7 @@ class Collector:
         if self._timeout is not None:
             self._timeout += max(
                 self._timeout - datetime.now(),
-                timedelta(milliseconds=report.rtt * report.ttl),
+                timedelta(milliseconds=report.rtt * log(report.ttl)),
             )
 
     async def run(self) -> dict[HostID, HostReport]:

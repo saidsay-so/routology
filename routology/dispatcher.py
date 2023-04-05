@@ -207,6 +207,8 @@ class Dispatcher:
                                         ProbeType.ICMP,
                                         True,
                                     )
+                            case other:
+                                self._logger.debug("Received %s type", other)
 
     def _add_to_queue(
         self,

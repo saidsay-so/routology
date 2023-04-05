@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from ipaddress import ip_address
 import asyncio
 from random import randint
@@ -5,6 +7,7 @@ import os
 
 from routology.collector import Collector
 from routology.dispatcher import Dispatcher
+from routology.graph import draw_graph
 from routology.scheduler import Scheduler
 from routology.sender import (
     ICMPProbeInfo,
@@ -14,6 +17,11 @@ from routology.sender import (
     UDPProbeInfo,
 )
 from routology.utils import HostID
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing import Optional, Generator
+    from routology.collector import Hop
 
 if os.name == "nt":
     import os.path
@@ -290,6 +298,23 @@ def get_icmp_info(infos: list[ProbeInfo], id: int, probe: ICMP) -> ProbeInfo | N
     )
 
 
+def map_hops(
+    hops: list[Optional[Hop]], attr: str
+) -> Generator[tuple[str, float], None, None]:
+    for i, hop in enumerate(hops):
+        print(hop)
+        response = getattr(hop, attr, None)
+        value = (
+            (f"Unknown node {i}", 1)
+            if response is None
+            else (
+                str(response.node_ip),
+                response.rtt,
+            )
+        )
+        yield value
+
+
 async def _main(
     ipv4: bool,
     ipv6: bool,
@@ -352,6 +377,12 @@ async def _main(
         scheduler.run(), dispatcher.run(), collector.run()
     )
     # loop.run_until_complete(loop.shutdown_asyncgens())
+    for host in collected:
+        for serie in collected[host].series:
+            hops = list(map_hops(serie, "udp_probe"))
+            # tcp_hops = list(map_hops(serie, "tcp_probe"))
+            # icmp_hops = list(map_hops(serie, "icmp_probe"))
+            draw_graph(hops)
 
 
 app()
