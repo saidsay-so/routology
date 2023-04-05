@@ -3,7 +3,7 @@ import asyncio
 from random import randint
 import os
 
-from routology.collector import Collector, Hop, Node
+from routology.collector import Collector
 from routology.dispatcher import Dispatcher
 from routology.scheduler import Scheduler
 from routology.sender import (
@@ -26,7 +26,8 @@ if os.name == "nt":
 
 import typer
 from scapy.layers.inet import TCP, UDP, ICMP
-#from scapy.layers.inet6 import IPv6, ICMPv6TimeExceeded, ICMPv6EchoReply
+
+# from scapy.layers.inet6 import IPv6, ICMPv6TimeExceeded, ICMPv6EchoReply
 
 app = typer.Typer()
 

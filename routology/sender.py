@@ -29,6 +29,7 @@ class SentProbeInfo:
     time: datetime
     host: HostID
     probe_type: ProbeType = field(init=False)
+    ip_id: int
 
 
 @dataclass
@@ -150,7 +151,8 @@ class Sender:
         data = "0" * (self._pkt_size - 8)
         for entry in entries:
             ttl = entry.ttl
-            ip = IP(dst=str(entry.host), ttl=ttl, id=self._ip_id_getter())
+            ip_id = self._ip_id_getter()
+            ip = IP(dst=str(entry.host), ttl=ttl, id=ip_id)
 
             udp_dport = self._compute_udp_dport()
 
@@ -174,6 +176,7 @@ class Sender:
                     host=entry.host,
                     sport=udp_sport,
                     dport=udp_dport,
+                    ip_id=ip_id,
                 )
             )
 
@@ -197,6 +200,7 @@ class Sender:
                     host=entry.host,
                     id=self._id,
                     seq=icmp_seq,
+                    ip_id=ip_id,
                 )
             )
 
@@ -220,6 +224,7 @@ class Sender:
                     sport=self._tcp_sport,
                     dport=self._tcp_dport,
                     seq=tcp_seq,
+                    ip_id=ip_id,
                 )
             )
 
