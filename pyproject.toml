@@ -9,7 +9,6 @@ readme = "README.md"
 python = ">=3.10,<3.12"
 networkx = "^3.0"
 typer = "^0.7.0"
-dnspython = "^2.3.0"
 aiostream = "^0.4.5"
 scapy = "^2.5.0"
 more-itertools = "^9.1.0"
@@ -17,6 +16,9 @@ pyvis = "^0.3.2"
 
 [tool.poetry.scripts]
 routology = "routology.__main__:app"
+
+[tool.poetry.group.build]
+optional = true
 
 [tool.poetry.group.build.dependencies]
 pyinstaller = "^5.7.0"
