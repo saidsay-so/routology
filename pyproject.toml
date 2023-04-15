@@ -14,6 +14,7 @@ scapy = "^2.5.0"
 more-itertools = "^9.1.0"
 pyvis = "^0.3.2"
 matplotlib = "^3.7.1"
+dnspython = "^2.3.0"
 
 [tool.poetry.scripts]
 routology = "routology.__main__:app"
