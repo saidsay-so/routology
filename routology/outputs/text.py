@@ -26,7 +26,7 @@ class ProbeOutput:
     node_name: Optional[str]
 
     def __str__(self) -> str:
-        return f"{self.node_ip} ({self.node_name or self.node_ip}) {self.rtt:.3f}ms"
+        return f"{self.node_name or self.node_ip} ({self.node_ip}) {self.rtt:.3f}ms"
 
 
 @dataclass
@@ -67,13 +67,13 @@ class HostTextFormatter:
     def __init__(
         self,
         addr: str,
-        ttl: int,
         series: int,
         collected: list[list[Hop | None]],
         loop: AbstractEventLoop,
         resolver: Resolver,
     ):
-        self.lines = [Line(ttl, [HopNode()] * series) for ttl in range(1, ttl + 1)]
+        max_ttl = max(len(s) for s in collected)
+        self.lines = [Line(ttl, [HopNode()] * series) for ttl in range(1, max_ttl + 1)]
         self.addr = addr
         self._loop = loop
         self._collected = collected
@@ -102,8 +102,8 @@ class HostTextFormatter:
         hop: ProbeResponse,
     ):
         try:
-            res = await self._resolver.resolve_address(str(hop.node_ip), lifetime=10)
-            node_name = res[0].target.to_unicode()  # type: ignore
+            res = await self._resolver.resolve_address(str(hop.node_ip))
+            node_name = res[0].target.to_unicode(omit_final_dot=True)  # type: ignore
         except Exception:
             node_name = None
 
@@ -114,7 +114,7 @@ class HostTextFormatter:
         )
 
     def __str__(self) -> str:
-        return "%s\n%s" % (
+        return "traceroute to %s\n%s" % (
             self.addr,
             "\n".join(str(line) for line in self.lines),
         )
@@ -130,15 +130,14 @@ class TextOutputFormatter:
     def __init__(
         self,
         collected: dict[HostID, HostReport],
-        ttl: int,
         series: int,
+        resolver: Resolver,
         loop: AbstractEventLoop = asyncio.get_event_loop(),
     ):
-        self.resolver = Resolver()
-        self.resolver.cache = LRUCache(ttl * series * 3)
+        self.resolver = resolver
         self.formatters = [
             HostTextFormatter(
-                str(addr), ttl, series, collected[addr].series, loop, self.resolver
+                str(addr), series, collected[addr].series, loop, self.resolver
             )
             for addr in collected
         ]

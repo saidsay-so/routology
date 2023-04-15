@@ -5,9 +5,10 @@ import asyncio
 from random import randint
 import os
 
+
 from routology.collector import Collector
 from routology.dispatcher import Dispatcher
-from routology.graph import draw_graph
+from routology.outputs.graph import draw_graph
 from routology.outputs.text import TextOutputFormatter
 from routology.scheduler import Scheduler
 from routology.sender import (
@@ -19,6 +20,9 @@ from routology.sender import (
 )
 from routology.utils import HostID
 from typing import TYPE_CHECKING
+
+from dns.asyncresolver import Resolver
+from dns.resolver import LRUCache
 
 if TYPE_CHECKING:
     from typing import Optional, Generator
@@ -119,7 +123,7 @@ def main(
         help="""Wait responses for WAIT seconds after sending all probes (defaults to 5 seconds).""",
     ),
     queries: int = typer.Option(
-        3, "-q", "--queries", help="Set the number of probes per hop"
+        1, "-q", "--queries", help="Set the number of series of probes per hop"
     ),
     direct: bool = typer.Option(
         False,
@@ -190,12 +194,17 @@ def main(
         60,
         help="The size of the packet to send",
     ),
+    output_text_file: str = typer.Option(
+        "routology.txt",
+        help="The output text file to write to",
+    ),
 ) -> None:
     if debug:
         import logging
         import sys
 
         root = logging.getLogger()
+        root.handlers = []
         root.setLevel(logging.DEBUG)
 
         handler = logging.StreamHandler(sys.stdout)
@@ -232,6 +241,7 @@ def main(
             back=back,
             hosts_file=hosts_file,
             pkt_size=size,
+            output_text_file=output_text_file,
         )
     )
 
@@ -298,6 +308,24 @@ def get_icmp_info(infos: list[ProbeInfo], id: int, probe: ICMP) -> ProbeInfo | N
     )
 
 
+def normalize_hops(hops: list[Optional[Hop]], dest: HostID):
+    for i, hop in enumerate(hops):
+        if hop is None:
+            continue
+
+        stop = False
+        for probe_type in ("icmp_probe", "tcp_probe", "udp_probe"):
+            res = getattr(hop, probe_type, None)
+            if res:
+                if res.node_ip == dest.addr:
+                    del hops[i + 1 :]
+                    stop = True
+                    break
+
+        if stop:
+            break
+
+
 def map_hops(
     hops: list[Optional[Hop]], attr: str
 ) -> Generator[tuple[str, float], None, None]:
@@ -337,6 +365,7 @@ async def _main(
     as_lookup: bool,
     mtu: bool,
     back: bool,
+    output_text_file: str,
     hosts_file: str,
     pkt_size: int,
 ) -> None:
@@ -383,9 +412,23 @@ async def _main(
         scheduler.run(), dispatcher.run(), collector.run()
     )
     # loop.run_until_complete(loop.shutdown_asyncgens())
-    text_output = TextOutputFormatter(collected, max_hops, queries, loop)
+
+    for host in hosts:
+        for serie in collected[host].series:
+            normalize_hops(serie, host)
+
+    resolver = Resolver()
+    resolver.cache = LRUCache(max_hops * queries)
+    text_output = TextOutputFormatter(
+        collected,
+        queries,
+        resolver=resolver,
+        loop=loop,
+    )
     await text_output.format()
     print(text_output)
+    with open(output_text_file, "w") as f:
+        f.write(str(text_output))
 
 
 app()
