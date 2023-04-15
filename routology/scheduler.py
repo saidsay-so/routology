@@ -40,6 +40,7 @@ class Scheduler:
         max_hops: int,
         sim_probes: int,
         send_wait: float,
+        first_ttl: int,
         finished_callback: Callable[[], None],
         logger: Optional[Logger] = None,
     ):
@@ -48,6 +49,7 @@ class Scheduler:
         self._send_wait = send_wait
         self._series = series
         self._max_hops = max_hops
+        self._first_ttl = first_ttl
         self._sim_probes = sim_probes
         self._hosts = {host for host in hosts}
         self._finished_callback = finished_callback
@@ -73,8 +75,8 @@ class Scheduler:
             (
                 SendRequest(ttl, serie, host)
                 for ttl, host, serie in product(
-                    range(1, self._max_hops + 1),
-                    (host for host in self._hosts),
+                    range(self._first_ttl, self._max_hops + 1),
+                    self._hosts,
                     range(0, self._series),
                 )
             ),

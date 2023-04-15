@@ -8,6 +8,7 @@ import os
 from routology.collector import Collector
 from routology.dispatcher import Dispatcher
 from routology.graph import draw_graph
+from routology.outputs.text import TextOutputFormatter
 from routology.scheduler import Scheduler
 from routology.sender import (
     ICMPProbeInfo,
@@ -51,12 +52,12 @@ def main(
     first_ttl: int = typer.Option(
         1, "-f", "--first-ttl", help="Start from the first_ttl hop (instead from 1)"
     ),
-    gateway: str = typer.Option(
-        None,
-        "-g",
-        "--gateway",
-        help="Route packets through the specified gateway (maximum 8 for IPv4 and 127 for IPv6)",
-    ),
+    # gateway: str = typer.Option(
+    #     None,
+    #     "-g",
+    #     "--gateway",
+    #     help="Route packets through the specified gateway (maximum 8 for IPv4 and 127 for IPv6)",
+    # ),
     # We already have a default way to send probes
     # icmp: bool = typer.Option(
     #     False, "-I", "--icmp", help="Use ICMP ECHO instead of UDP datagrams"
@@ -111,13 +112,11 @@ def main(
     flow_label: int = typer.Option(
         0, "-Q", "--flow-label", help="Set the IPv6 flow label in probe packets"
     ),
-    wait: tuple[int, int, int] = typer.Option(
-        (5, 3, 10),
+    wait: float = typer.Option(
+        5,
         "-w",
         "--wait",
-        help="""Wait for a probe no more than HERE times longer than a response from the same hop,
-        or no more than NEAR times than some next hop,
-        or MAX seconds in total.""",
+        help="""Wait responses for WAIT seconds after sending all probes (defaults to 5 seconds).""",
     ),
     queries: int = typer.Option(
         3, "-q", "--queries", help="Set the number of probes per hop"
@@ -192,19 +191,20 @@ def main(
         help="The size of the packet to send",
     ),
 ) -> None:
-    import logging
-    import sys
+    if debug:
+        import logging
+        import sys
 
-    root = logging.getLogger()
-    root.setLevel(logging.DEBUG)
+        root = logging.getLogger()
+        root.setLevel(logging.DEBUG)
 
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setLevel(logging.DEBUG)
-    formatter = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    )
-    handler.setFormatter(formatter)
-    root.addHandler(handler)
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setLevel(logging.DEBUG)
+        formatter = logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        )
+        handler.setFormatter(formatter)
+        root.addHandler(handler)
 
     asyncio.run(
         _main(
@@ -213,7 +213,7 @@ def main(
             debug=debug,
             dont_fragment=dont_fragment,
             first_ttl=first_ttl,
-            gateway=gateway,
+            # gateway=gateway,
             max_hops=max_hops,
             sim_queries=sim_queries,
             no_dns=no_dns,
@@ -302,7 +302,6 @@ def map_hops(
     hops: list[Optional[Hop]], attr: str
 ) -> Generator[tuple[str, float], None, None]:
     for i, hop in enumerate(hops):
-        print(hop)
         response = getattr(hop, attr, None)
         value = (
             (f"Unknown node {i}", 1)
@@ -321,7 +320,7 @@ async def _main(
     debug: bool,
     dont_fragment: bool,
     first_ttl: int,
-    gateway: str,
+    # gateway: str,
     max_hops: int,
     sim_queries: int,
     no_dns: bool,
@@ -329,7 +328,7 @@ async def _main(
     udp_port: int,
     tos: int,
     flow_label: int,
-    wait: tuple[int, int, int],
+    wait: float,
     queries: int,
     direct: bool,
     source_address: str,
@@ -357,7 +356,7 @@ async def _main(
         hosts=hosts,
         dispatcher=dispatcher,
         max_hops=max_hops,
-        delay=wait[0],
+        delay=wait,
         series=queries,
         send_wait=sendwait,
         sim_probes=sim_queries,
@@ -376,6 +375,7 @@ async def _main(
         series=queries,
         sim_probes=sim_queries,
         max_hops=max_hops,
+        first_ttl=first_ttl,
         finished_callback=collector.start_timeout,
     )
 
@@ -383,12 +383,9 @@ async def _main(
         scheduler.run(), dispatcher.run(), collector.run()
     )
     # loop.run_until_complete(loop.shutdown_asyncgens())
-    for host in collected:
-        for serie in collected[host].series:
-            hops = list(map_hops(serie, "udp_probe"))
-            # tcp_hops = list(map_hops(serie, "tcp_probe"))
-            # icmp_hops = list(map_hops(serie, "icmp_probe"))
-            draw_graph(hops)
+    text_output = TextOutputFormatter(collected, max_hops, queries, loop)
+    await text_output.format()
+    print(text_output)
 
 
 app()
