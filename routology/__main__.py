@@ -231,7 +231,7 @@ def main(
             mtu=mtu,
             back=back,
             hosts_file=hosts_file,
-            size=size,
+            pkt_size=size,
         )
     )
 
@@ -339,7 +339,7 @@ async def _main(
     mtu: bool,
     back: bool,
     hosts_file: str,
-    size: int,
+    pkt_size: int,
 ) -> None:
     loop = asyncio.get_event_loop()
     hosts = get_hosts(hosts_file)
@@ -365,7 +365,13 @@ async def _main(
     scheduler = Scheduler(
         hosts=hosts,
         dispatcher=dispatcher,
-        sender=Sender(probes_info.append, loop, icmp_id=icmp_id),
+        sender=Sender(
+            probes_info.append,
+            loop,
+            packet_size=pkt_size,
+            icmp_id=icmp_id,
+            dont_fragment=dont_fragment,
+        ),
         send_wait=sendwait,
         series=queries,
         sim_probes=sim_queries,

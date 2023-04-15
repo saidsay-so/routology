@@ -152,7 +152,12 @@ class Sender:
         for entry in entries:
             ttl = entry.ttl
             ip_id = self._ip_id_getter()
-            ip = IP(dst=str(entry.host), ttl=ttl, id=ip_id)
+            ip = IP(
+                dst=str(entry.host),
+                ttl=ttl,
+                id=ip_id,
+                flags="DF" if self._dont_fragment else 0,
+            )
 
             udp_dport = self._compute_udp_dport()
 
