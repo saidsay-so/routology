@@ -14,7 +14,6 @@ def ip_to_dns(ip_list):
         try:
             # Résoudre le nom DNS à partir de l'adresse IP
             dns = socket.gethostbyaddr(ip)[0]
-            print(dns)
         except (socket.herror,socket.gaierror):
             dns = ip
         dns_list.append((dns,rtt))
@@ -42,7 +41,7 @@ def draw_graph(ip_rtt_list):
         G,
         pos,
         edgelist=G.edges(),
-        arrowsize=[d["rtt"] for (u, v, d) in G.edges(data=True)],
+        # arrowsize=[d["rtt"] for (u, v, d) in G.edges(data=True)],
     )
     nx.draw_networkx_edge_labels(G, pos)
     nx.draw(G, pos, with_labels=True)
