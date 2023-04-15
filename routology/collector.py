@@ -96,15 +96,15 @@ class Collector:
         )
         host = self._hosts[report.host_id]
 
-        hops = host.series[report.series]
-        if hops is None:
-            hops = [None] * self._max_hops
-            host.series[report.series] = hops
+        serie = host.series[report.series]
+        if serie is None:
+            serie = [None] * self._max_hops
+            host.series[report.series] = serie
 
-        hop = hops[report.ttl - 1]
+        hop = serie[report.ttl - 1]
         if hop is None:
             hop = Hop()
-            hops[report.ttl - 1] = hop
+            serie[report.ttl - 1] = hop
 
         match report.probe_type:
             case ProbeType.UDP:
@@ -127,7 +127,7 @@ class Collector:
     def get_timeout(self) -> float:
         """Returns the timeout for the collector."""
         if self._timeout is None:
-            return 15
+            return self._delay
 
         diff = self._timeout - datetime.now()
         return max(diff.total_seconds(), 0)
@@ -135,10 +135,10 @@ class Collector:
     def _compute_timeout(self, report: DispatchedProbeReport):
         """Computes the timeout for the collector."""
         if self._timeout is not None:
-            self._timeout += max(
-                self._timeout - datetime.now(),
-                timedelta(milliseconds=report.rtt * log(report.ttl)),
-            )
+            diff = timedelta(milliseconds=report.rtt * log(report.ttl))
+            actual_diff = self._timeout - datetime.now()
+            if actual_diff < diff:
+                self._timeout += diff - actual_diff
 
     async def run(self) -> dict[HostID, HostReport]:
         """Runs the collector."""
@@ -154,7 +154,7 @@ class Collector:
                     self._collect(report)
                     self._compute_timeout(report)
         except TimeoutError:
-            self._logger.warn("Expired timeout for collector")
+            self._logger.info("Expired timeout for collector")
         finally:
             self._logger.info("Collector finished")
             await self._dispatcher.close()
