@@ -70,6 +70,7 @@ class SendRequest:
     ttl: int
     serie: int
     host: HostID
+    probe_type: ProbeType
 
 
 class Sender:
@@ -141,7 +142,7 @@ class Sender:
         return self._udp_dport
 
     async def send_probes(
-        self, entries: list[SendRequest], pkt_send_time: int = 0
+        self, entries: list[SendRequest], pkt_send_time: float = 0
     ) -> None:
         """Send a serie of probes."""
         if not entries:
@@ -159,79 +160,85 @@ class Sender:
                 flags="DF" if self._dont_fragment else 0,
             )
 
-            udp_dport = self._compute_udp_dport()
+            match entry.probe_type:
+                case ProbeType.UDP:
+                    udp_dport = self._compute_udp_dport()
 
-            udp_sport = (
-                self._udp_sport if self._unified_udp_sport else randint(2048, 65535)
-            )
-            probes.append(
-                ip
-                / UDP(
-                    dport=udp_dport,
-                    sport=udp_sport,
-                )
-                / data
-            )
+                    udp_sport = (
+                        self._udp_sport
+                        if self._unified_udp_sport
+                        else randint(2048, 65535)
+                    )
+                    probes.append(
+                        ip
+                        / UDP(
+                            dport=udp_dport,
+                            sport=udp_sport,
+                        )
+                        / data
+                    )
 
-            self._probe_info_collector(
-                UDPProbeInfo(
-                    ttl=entry.ttl,
-                    serie=entry.serie,
-                    time=datetime.now(),
-                    host=entry.host,
-                    sport=udp_sport,
-                    dport=udp_dport,
-                    ip_id=ip_id,
-                )
-            )
+                    self._probe_info_collector(
+                        UDPProbeInfo(
+                            ttl=entry.ttl,
+                            serie=entry.serie,
+                            time=datetime.now(),
+                            host=entry.host,
+                            sport=udp_sport,
+                            dport=udp_dport,
+                            ip_id=ip_id,
+                        )
+                    )
 
-            icmp_seq = self._icmp_seq_getter()
-            probes.append(
-                ip
-                / ICMP(
-                    type=8,
-                    code=0,
-                    id=self._id,
-                    seq=icmp_seq,
-                )
-                / data
-            )
+                case ProbeType.ICMP:
+                    icmp_seq = self._icmp_seq_getter()
+                    probes.append(
+                        ip
+                        / ICMP(
+                            type=8,
+                            code=0,
+                            id=self._id,
+                            seq=icmp_seq,
+                        )
+                        / data
+                    )
 
-            self._probe_info_collector(
-                ICMPProbeInfo(
-                    ttl=entry.ttl,
-                    serie=entry.serie,
-                    time=datetime.now(),
-                    host=entry.host,
-                    id=self._id,
-                    seq=icmp_seq,
-                    ip_id=ip_id,
-                )
-            )
+                    self._probe_info_collector(
+                        ICMPProbeInfo(
+                            ttl=entry.ttl,
+                            serie=entry.serie,
+                            time=datetime.now(),
+                            host=entry.host,
+                            id=self._id,
+                            seq=icmp_seq,
+                            ip_id=ip_id,
+                        )
+                    )
 
-            tcp_seq = self._tcp_seq_getter()
-            probes.append(
-                ip
-                / TCP(
-                    dport=self._tcp_dport,
-                    sport=self._tcp_sport,
-                    seq=tcp_seq,
-                    flags="S",
-                )
-            )
+                case ProbeType.TCP:
+                    tcp_seq = self._tcp_seq_getter()
+                    probes.append(
+                        ip
+                        / TCP(
+                            dport=self._tcp_dport,
+                            sport=self._tcp_sport,
+                            seq=tcp_seq,
+                            flags="S",
+                        )
+                    )
 
-            self._probe_info_collector(
-                TCPProbeInfo(
-                    ttl=entry.ttl,
-                    serie=entry.serie,
-                    time=datetime.now(),
-                    host=entry.host,
-                    sport=self._tcp_sport,
-                    dport=self._tcp_dport,
-                    seq=tcp_seq,
-                    ip_id=ip_id,
-                )
-            )
+                    self._probe_info_collector(
+                        TCPProbeInfo(
+                            ttl=entry.ttl,
+                            serie=entry.serie,
+                            time=datetime.now(),
+                            host=entry.host,
+                            sport=self._tcp_sport,
+                            dport=self._tcp_dport,
+                            seq=tcp_seq,
+                            ip_id=ip_id,
+                        )
+                    )
 
         self._logger.debug(
             "Sending probes to %s",
@@ -243,5 +250,6 @@ class Sender:
                 PacketList(probes),
                 inter=pkt_send_time,
                 verbose=False,
+                realtime=True,
             ),
         )

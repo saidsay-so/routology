@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Optional
 from more_itertools import batched
 
 from routology.dispatcher import DispatchedProbeReport, Dispatcher
+from routology.probe import ProbeType
 from routology.sender import SendRequest, Sender
 from routology.utils import HostID
 
@@ -18,8 +19,7 @@ if TYPE_CHECKING:
 
 
 class Scheduler:
-    """Schedules sending probes to hosts
-    and receiving responses from hosts with the dispatcher."""
+    """Schedules sending probes to hosts while filtering out hosts that have already responded."""
 
     _subscription: AsyncGenerator[DispatchedProbeReport, None]
     _sender: Sender
@@ -29,6 +29,7 @@ class Scheduler:
     _sim_probes: int
     _send_wait: float
     _finished_callback: Callable[[], None]
+    _progress_callback: Callable[[int], None]
     _logger: Logger
 
     def __init__(
@@ -75,17 +76,19 @@ class Scheduler:
         """Send probes to hosts."""
         for probe_batch in batched(
             (
-                SendRequest(ttl, serie, host)
-                for ttl, host, serie in product(
+                SendRequest(ttl, serie, host, probe_type)
+                for ttl, host, serie, probe_type in product(
                     range(self._first_ttl, self._max_hops + 1),
                     self._hosts,
                     range(0, self._series),
+                    (ProbeType.UDP, ProbeType.TCP, ProbeType.ICMP),
                 )
             ),
             self._sim_probes,
         ):
             await self._sender.send_probes(
                 [probe for probe in probe_batch if probe.host in self._hosts],
+                pkt_send_time=self._send_wait,
             )
             self._progress_callback(self._sim_probes)
             # We need to check if there are any hosts left to probe
