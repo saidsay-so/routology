@@ -41,7 +41,7 @@ def draw_graph(ip_rtt_list):
         G,
         pos,
         edgelist=G.edges(),
-        # arrowsize=[d["rtt"] for (u, v, d) in G.edges(data=True)],
+        arrowsize=[d["rtt"] for (u, v, d) in G.edges(data=True)],
     )
     nx.draw_networkx_edge_labels(G, pos)
     nx.draw(G, pos, with_labels=True)
