@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from ipaddress import IPv4Address, IPv6Address, ip_address
 from asyncio import wait_for
+from itertools import cycle
 
 from aiostream import streamcontext, operator
 from aiostream.aiter_utils import anext
@@ -11,14 +12,16 @@ from socket import gethostbyname
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from typing import AsyncIterable, Callable, TypeVar
+    from typing import AsyncIterable, Callable, TypeVar, Any
 
     T = TypeVar("T")
 
 
 @operator(pipable=True)
 async def dynamic_timeout(
-    source: AsyncIterable[T], timeout: Callable[[], float]
+    source: AsyncIterable[T],
+    timeout: Callable[[], float],
+    should_exit: Callable[[], None],
 ) -> AsyncIterable[T]:
     """Yield items from an async iterable with a dynamic timeout.
 
@@ -29,7 +32,8 @@ async def dynamic_timeout(
             try:
                 item = await wait_for(anext(streamer), timeout())
             except StopAsyncIteration:
-                break
+                if should_exit():
+                    break
             else:
                 yield item
 
@@ -71,3 +75,22 @@ class HostID:
 
     def __str__(self) -> str:
         return str(self.addr)
+
+
+class Incrementer:
+    """A simple incrementer."""
+
+    _min: int
+    _max: int
+    _it: Any
+
+    def __init__(self, min: int = 0, max: int = 2**16 - 1):
+        self._min = min
+        self._max = max
+        self._it = iter(cycle(range(min, max + 1)))
+
+    def __call__(self) -> int:
+        return next(self._it)
+
+    def __repr__(self) -> str:
+        return f"Incrementer(min={self._min}, max={self._max})"

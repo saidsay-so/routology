@@ -175,7 +175,7 @@ class Dispatcher:
                                         ProbeType.ICMP,
                                     )
 
-                    case 3, 10:
+                    case 3, code:
                         # We've reached the destination
                         # Likely a response to the UDP probe, but we can't be sure
                         previous_ip = cast(IP, icmp.payload)
@@ -187,7 +187,7 @@ class Dispatcher:
                                         addr,
                                         probe_info,
                                         ProbeType.UDP,
-                                        True,
+                                        code == 10,
                                     )
                             case TCP() as tcp:
                                 probe_info = self._tcp_info_getter(tcp)
@@ -196,7 +196,7 @@ class Dispatcher:
                                         addr,
                                         probe_info,
                                         ProbeType.TCP,
-                                        True,
+                                        code == 10,
                                     )
                             case ICMP() as icmp:
                                 probe_info = self._icmp_info_getter(icmp)
@@ -205,10 +205,10 @@ class Dispatcher:
                                         addr,
                                         probe_info,
                                         ProbeType.ICMP,
-                                        True,
+                                        code == 10,
                                     )
-                            case other:
-                                self._logger.debug("Received %s type", other)
+                    case other:
+                        self._logger.debug("Received %s type", other)
 
     def _add_to_queue(
         self,

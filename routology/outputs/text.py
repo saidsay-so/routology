@@ -63,6 +63,7 @@ class HostTextFormatter:
     _loop: AbstractEventLoop
     _collected: list[list[Hop | None]]
     _resolver: Resolver
+    _no_dns: bool
 
     def __init__(
         self,
@@ -71,6 +72,7 @@ class HostTextFormatter:
         collected: list[list[Hop | None]],
         loop: AbstractEventLoop,
         resolver: Resolver,
+        no_dns: bool = False,
     ):
         max_ttl = max(len(s) for s in collected)
         self.lines = [Line(ttl, [HopNode()] * series) for ttl in range(1, max_ttl + 1)]
@@ -78,6 +80,7 @@ class HostTextFormatter:
         self._loop = loop
         self._collected = collected
         self._resolver = resolver
+        self._no_dns = no_dns
 
     async def build(self):
         tasks = []
@@ -101,11 +104,16 @@ class HostTextFormatter:
         ttl: int,
         hop: ProbeResponse,
     ):
-        try:
-            res = await self._resolver.resolve_address(str(hop.node_ip))
-            node_name = res[0].target.to_unicode(omit_final_dot=True)  # type: ignore
-        except Exception:
+        if self._no_dns:
             node_name = None
+        else:
+            try:
+                res = await self._resolver.resolve_address(
+                    str(hop.node_ip), lifetime=10
+                )
+                node_name = res[0].target.to_unicode(omit_final_dot=True)  # type: ignore
+            except Exception:
+                node_name = None
 
         setattr(
             self.lines[ttl].series[serie_num],
@@ -132,12 +140,18 @@ class TextOutputFormatter:
         collected: dict[HostID, HostReport],
         series: int,
         resolver: Resolver,
+        no_dns: bool = False,
         loop: AbstractEventLoop = asyncio.get_event_loop(),
     ):
         self.resolver = resolver
         self.formatters = [
             HostTextFormatter(
-                str(addr), series, collected[addr].series, loop, self.resolver
+                str(addr),
+                series,
+                collected[addr].series,
+                loop,
+                self.resolver,
+                no_dns=no_dns,
             )
             for addr in collected
         ]
