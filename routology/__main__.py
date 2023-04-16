@@ -29,7 +29,7 @@ from dns.asyncresolver import Resolver
 from dns.resolver import LRUCache
 
 if TYPE_CHECKING:
-    from typing import Generator
+    from typing import AsyncGenerator
     from routology.collector import Hop
 
 if os.name == "nt":
@@ -117,9 +117,9 @@ def main(
     tos: int = typer.Option(
         0, "-q", "--tos", help="Set the TOS (IPv4)/TC (IPv6) field in probe packets"
     ),
-    flow_label: int = typer.Option(
-        0, "-Q", "--flow-label", help="Set the IPv6 flow label in probe packets"
-    ),
+    # flow_label: int = typer.Option(
+    #     0, "-Q", "--flow-label", help="Set the IPv6 flow label in probe packets"
+    # ),
     wait: float = typer.Option(
         5,
         "-w",
@@ -127,7 +127,7 @@ def main(
         help="""Wait responses for WAIT seconds after sending all probes (defaults to 5 seconds).""",
     ),
     queries: int = typer.Option(
-        1, "-q", "--queries", help="Set the number of series of probes per hop"
+        3, "-q", "--queries", help="Set the number of series of probes per hop"
     ),
     # direct: bool = typer.Option(
     #     False,
@@ -206,7 +206,7 @@ def main(
     if first_ttl > max_hops:
         typer.echo("First TTL must be less than or equal to max hops")
         raise typer.Exit(1)
-    
+
     if size > 65500:
         typer.echo("Packet size must be less than or equal to 65500")
         raise typer.Exit(1)
@@ -242,7 +242,7 @@ def main(
             tcp_port=tcp_port,
             udp_port=udp_port,
             tos=tos,
-            flow_label=flow_label,
+            # flow_label=flow_label,
             wait=wait,
             queries=queries,
             # direct=direct,
@@ -341,16 +341,26 @@ def normalize_hops(hops: list[Optional[Hop]], dest: HostID):
             break
 
 
-def map_hops(
-    hops: list[Optional[Hop]], attr: str
-) -> Generator[tuple[str, float], None, None]:
+async def map_hops(
+    hops: list[Optional[Hop]], attr: str, resolver: Optional[Resolver]
+) -> AsyncGenerator[tuple[str, str, float], None]:
     for i, hop in enumerate(hops):
         response = getattr(hop, attr, None)
+        if resolver and response:
+            try:
+                res = await resolver.resolve_address(response.node_ip)
+                name = res[0].target  # type: ignore
+            except Exception:
+                name = str(response.node_ip)
+        else:
+            name = str(response.node_ip) if response else "Unknown node"
+
         value = (
-            (f"Unknown node {i}", 1)
+            (f"Unknown node {i}", name, 1)
             if response is None
             else (
                 str(response.node_ip),
+                name,
                 int(response.rtt),
             )
         )
@@ -371,7 +381,7 @@ async def _main(
     udp_port: int,
     sport: Optional[int],
     tos: int,
-    flow_label: int,
+    # flow_label: int,
     wait: float,
     queries: int,
     # direct: bool,
@@ -385,7 +395,7 @@ async def _main(
     hosts_file: str,
     pkt_size: int,
 ) -> None:
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     hosts = get_hosts(hosts_file)
     probes_info: list[ProbeInfo] = []
     icmp_id = randint(0, 2**16 - 1)
@@ -444,13 +454,15 @@ async def _main(
         progress_callback=reporter.update_probes_callback,
     )
 
-    _, _, _, collected = await asyncio.gather(
+    _, _, skipped, collected = await asyncio.gather(
         scheduler.run(),
         dispatcher.run(),
         reporter.run(),
         collector.run(),
     )
     # loop.run_until_complete(loop.shutdown_asyncgens())
+
+    typer.echo(f"Skipped {skipped} probes")
 
     for host in hosts:
         for serie in collected[host].series:
@@ -466,19 +478,27 @@ async def _main(
         no_dns=no_dns,
     )
     await text_output.format()
-    print(text_output)
+
+    typer.echo(text_output)
+
     with open(output_text_file, "w") as f:
         f.write(str(text_output))
 
-    fig, axs = plt.subplots(1, len(hosts)*queries, figsize=((10, 5)))
-    axs_list=iter(axs)
-    for host in collected:
-        for serie in collected[host].series:
-            hops = list(map_hops(serie, "udp_probe"))
-            # tcp_hops = list(map_hops(serie, "tcp_probe"))
-            # icmp_hops = list(map_hops(serie, "icmp_probe"))
-            draw_graph(hops,next(axs_list))
+    for attr, title in (
+        ("udp_probe", "UDP"),
+        ("tcp_probe", "TCP"),
+        ("icmp_probe", "ICMP"),
+    ):
+        hops = [
+            [
+                hop
+                async for hop in map_hops(serie, attr, resolver if not no_dns else None)
+            ]
+            for host in collected
+            for serie in collected[host].series
+        ]
 
-    plt.show()
+    plt.show(block=True)
+
 
 app()

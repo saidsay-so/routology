@@ -66,6 +66,4 @@ class Reporter:
 
         t = self._probes_progress.tasks[0]
         skipped = t.total - t.completed if t.total else 0
-        if skipped:
-            print(f"Skipped {skipped} probes")
-            print()
+        return skipped
