@@ -467,5 +467,12 @@ async def _main(
     with open(output_text_file, "w") as f:
         f.write(str(text_output))
 
+    for host in collected:
+        for serie in collected[host].series:
+            hops = list(map_hops(serie, "udp_probe"))
+            # tcp_hops = list(map_hops(serie, "tcp_probe"))
+            # icmp_hops = list(map_hops(serie, "icmp_probe"))
+            draw_graph(hops)
+
 
 app()
