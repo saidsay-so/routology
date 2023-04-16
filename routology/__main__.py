@@ -19,14 +19,14 @@ from routology.sender import (
     TCPProbeInfo,
     UDPProbeInfo,
 )
-from routology.utils import HostID
-from typing import TYPE_CHECKING
+from routology.utils import HostID, Incrementer
+from typing import TYPE_CHECKING, Optional
 
 from dns.asyncresolver import Resolver
 from dns.resolver import LRUCache
 
 if TYPE_CHECKING:
-    from typing import Optional, Generator
+    from typing import Generator
     from routology.collector import Hop
 
 if os.name == "nt":
@@ -49,7 +49,7 @@ app = typer.Typer()
 @app.command(help="traceroute, but not better.")
 def main(
     ipv4: bool = typer.Option(False, "-4", help="Use IPv4"),
-    ipv6: bool = typer.Option(False, "-6", help="Use IPv6"),
+    # ipv6: bool = typer.Option(False, "-6", help="Use IPv6"),
     debug: bool = typer.Option(False, "-d", "--debug", help="Debug mode"),
     dont_fragment: bool = typer.Option(
         False, "-F", "--dont-fragment", help="Do not fragment packets"
@@ -106,10 +106,10 @@ def main(
         False, "-n", help="Do not resolve addresses to hostnames"
     ),
     tcp_port: int = typer.Option(
-        33434, "-p", "--port", help="Set the destination port for TCP SYN probes"
+        33434, "-T", "--tcp-port", help="Set the destination port for TCP SYN probes"
     ),
     udp_port: int = typer.Option(
-        33434, "-p", "--port", help="Set the destination port for UDP probes"
+        33434, "-U", "--udp-port", help="Set the destination port for UDP probes"
     ),
     tos: int = typer.Option(
         0, "-q", "--tos", help="Set the TOS (IPv4)/TC (IPv6) field in probe packets"
@@ -126,22 +126,22 @@ def main(
     queries: int = typer.Option(
         1, "-q", "--queries", help="Set the number of series of probes per hop"
     ),
-    direct: bool = typer.Option(
-        False,
-        "-r",
-        help="Bypass the normal routing and send directly to a host on an attached network",
-    ),
-    source_address: str = typer.Option(
-        None,
-        "-s",
-        "--source-address",
-        help="Use the specified source address for outgoing packets",
-    ),
+    # direct: bool = typer.Option(
+    #     False,
+    #     "-r",
+    #     help="Bypass the normal routing and send directly to a host on an attached network",
+    # ),
+    # source_address: str = typer.Option(
+    #     None,
+    #     "-s",
+    #     "--source-address",
+    #     help="Use the specified source address for outgoing packets",
+    # ),
     sendwait: float = typer.Option(
         0.0,
         "-z",
         "--sendwait",
-        help="Wait for a specified number of seconds (or in milliseconds if more than 10) between sending probes",
+        help="Wait for a specified number of seconds between sending probes",
     ),
     extension: bool = typer.Option(
         None,
@@ -149,12 +149,12 @@ def main(
         "--extensions",
         help="Show ICMP extensions (if present), including MPLS",
     ),
-    as_lookup: bool = typer.Option(
-        False,
-        "-A",
-        "--as-path-lookups",
-        help="Perform AS path lookups using the RIPE NCC's RIS whois service",
-    ),
+    # as_lookup: bool = typer.Option(
+    #     False,
+    #     "-A",
+    #     "--as-path-lookups",
+    #     help="Perform AS path lookups using the RIPE NCC's RIS whois service",
+    # ),
     # module: str = typer.Option(
     #     None,
     #     "-M",
@@ -167,26 +167,26 @@ def main(
     #     "--options",
     #     help="Use module-specific options to perform the traceroute",
     # ),
-    # source_port: int = typer.Option(
-    #     None,
-    #     "--sport",
-    #     help="Use the specified source port for outgoing packets",
-    # ),
+    source_port: Optional[int] = typer.Option(
+        None,
+        "--sport",
+        help="Use the specified source port for outgoing packets",
+    ),
     # firewall_mark: int = typer.Option(
     #     None,
     #     "--fwmark",
     #     help="Use the specified firewall mark for outgoing packets",
     # ),
-    mtu: bool = typer.Option(
-        False,
-        "--mtu",
-        help="Discover the MTU along the path being traced",
-    ),
-    back: bool = typer.Option(
-        False,
-        "--back",
-        help="Guess the number of hops in the backward path",
-    ),
+    # mtu: bool = typer.Option(
+    #     False,
+    #     "--mtu",
+    #     help="Discover the MTU along the path being traced",
+    # ),
+    # back: bool = typer.Option(
+    #     False,
+    #     "--back",
+    #     help="Guess the number of hops in the backward path",
+    # ),
     hosts_file: str = typer.Argument(
         ...,
         help="The hosts file to use for the traceroute",
@@ -200,6 +200,14 @@ def main(
         help="The output text file to write to",
     ),
 ) -> None:
+    if first_ttl > max_hops:
+        typer.echo("First TTL must be less than or equal to max hops")
+        raise typer.Exit(1)
+    
+    if size > 65500:
+        typer.echo("Packet size must be less than or equal to 65500")
+        raise typer.Exit(1)
+
     if debug:
         import logging
         import sys
@@ -219,7 +227,7 @@ def main(
     asyncio.run(
         _main(
             ipv4=ipv4,
-            ipv6=ipv6,
+            # ipv6=ipv6,
             debug=debug,
             dont_fragment=dont_fragment,
             first_ttl=first_ttl,
@@ -227,19 +235,20 @@ def main(
             max_hops=max_hops,
             sim_queries=sim_queries,
             no_dns=no_dns,
+            sport=source_port,
             tcp_port=tcp_port,
             udp_port=udp_port,
             tos=tos,
             flow_label=flow_label,
             wait=wait,
             queries=queries,
-            direct=direct,
-            source_address=source_address,
+            # direct=direct,
+            # source_address=source_address,
             sendwait=sendwait,
             extension=extension,
-            as_lookup=as_lookup,
-            mtu=mtu,
-            back=back,
+            # as_lookup=as_lookup,
+            # mtu=mtu,
+            # back=back,
             hosts_file=hosts_file,
             pkt_size=size,
             output_text_file=output_text_file,
@@ -296,13 +305,15 @@ def get_udp_info(infos: list[ProbeInfo], probe: UDP) -> ProbeInfo | None:
     )
 
 
-def get_icmp_info(infos: list[ProbeInfo], id: int, probe: ICMP) -> ProbeInfo | None:
+def get_icmp_info(
+    infos: list[ProbeInfo], icmp_id: int, probe: ICMP
+) -> ProbeInfo | None:
     return next(
         (
             info
             for info in infos
             if isinstance(info, ICMPProbeInfo)
-            and info.id == id
+            and info.id == icmp_id
             and info.seq == probe.seq
         ),
         None,
@@ -345,7 +356,7 @@ def map_hops(
 
 async def _main(
     ipv4: bool,
-    ipv6: bool,
+    # ipv6: bool,
     debug: bool,
     dont_fragment: bool,
     first_ttl: int,
@@ -355,17 +366,18 @@ async def _main(
     no_dns: bool,
     tcp_port: int,
     udp_port: int,
+    sport: Optional[int],
     tos: int,
     flow_label: int,
     wait: float,
     queries: int,
-    direct: bool,
-    source_address: str,
+    # direct: bool,
+    # source_address: str,
     sendwait: float,
     extension: bool,
-    as_lookup: bool,
-    mtu: bool,
-    back: bool,
+    # as_lookup: bool,
+    # mtu: bool,
+    # back: bool,
     output_text_file: str,
     hosts_file: str,
     pkt_size: int,
@@ -399,6 +411,10 @@ async def _main(
         sim_probes=sim_queries,
         finished_callback=reporter.complete_timeout_callback,
     )
+    ip_id_getter = Incrementer()
+    tcp_seq_getter = Incrementer(max=2**32 - 1)
+    icmp_seq_getter = Incrementer()
+
     scheduler = Scheduler(
         hosts=hosts,
         dispatcher=dispatcher,
@@ -408,6 +424,13 @@ async def _main(
             packet_size=pkt_size,
             icmp_id=icmp_id,
             dont_fragment=dont_fragment,
+            tcp_sport=sport or 0,
+            udp_sport=sport or 0,
+            udp_dport=udp_port,
+            tcp_dport=tcp_port,
+            ip_id_getter=ip_id_getter,
+            tcp_seq_getter=tcp_seq_getter,
+            icmp_seq_getter=icmp_seq_getter,
         ),
         send_wait=sendwait,
         series=queries,
@@ -437,6 +460,7 @@ async def _main(
         queries,
         resolver=resolver,
         loop=loop,
+        no_dns=no_dns,
     )
     await text_output.format()
     print(text_output)
