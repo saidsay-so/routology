@@ -6,9 +6,12 @@ from random import randint
 import os
 
 
+import matplotlib.pyplot as plt
+
+
 from routology.collector import Collector
 from routology.dispatcher import Dispatcher
-from routology.outputs.graph import draw_graph
+from routology.outputs.theOneGraph import draw_graph
 from routology.outputs.text import TextOutputFormatter
 from routology.reporter import Reporter
 from routology.scheduler import Scheduler
@@ -348,7 +351,7 @@ def map_hops(
             if response is None
             else (
                 str(response.node_ip),
-                response.rtt,
+                int(response.rtt),
             )
         )
         yield value
@@ -467,12 +470,15 @@ async def _main(
     with open(output_text_file, "w") as f:
         f.write(str(text_output))
 
+    fig, axs = plt.subplots(1, len(hosts)*queries, figsize=((10, 5)))
+    axs_list=iter(axs)
     for host in collected:
         for serie in collected[host].series:
             hops = list(map_hops(serie, "udp_probe"))
             # tcp_hops = list(map_hops(serie, "tcp_probe"))
             # icmp_hops = list(map_hops(serie, "icmp_probe"))
-            draw_graph(hops)
+            draw_graph(hops,next(axs_list))
 
+    plt.show()
 
 app()

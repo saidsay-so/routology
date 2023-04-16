@@ -15,6 +15,7 @@ def unknownhost(l):
 udp_list = []
 tcp_list = []
 icmp_list = []
+
 def read_trc_result(result):
     
 
@@ -106,15 +107,14 @@ def draw_graph(ip_rtt_list, ax):
     nx.draw(G, pos, with_labels=True, ax=ax)
     print("!! " + str(len(G.edges())) + " " + str(len(rtt_list)) + " " + str(len(ip_rtt_list)))
 
-read_trc_result("routology.txt")
+"""
+#read_trc_result("routology.txt")
 
-if __name__ == '__main__':
-    list_b=ip_to_dns(list_b)
-    list_a=ip_to_dns(list_a)
-
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
-
-    draw_graph(udp_list, ax1)
-    ax1.set_title('Graph A')
-    draw_graph(tcp_list,ax2)
-    plt.show()
+#if __name__ == '__main__':
+list_b=ip_to_dns(list_b)
+list_a=ip_to_dns(list_a)
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
+#draw_graph(udp_list, ax1)
+ax1.set_title('Graph A')
+plt.show()
+"""
