@@ -10,6 +10,7 @@ from routology.collector import Collector
 from routology.dispatcher import Dispatcher
 from routology.outputs.graph import draw_graph
 from routology.outputs.text import TextOutputFormatter
+from routology.reporter import Reporter
 from routology.scheduler import Scheduler
 from routology.sender import (
     ICMPProbeInfo,
@@ -381,6 +382,13 @@ async def _main(
         lambda x: None,
     )
 
+    reporter = Reporter(
+        max_hops=max_hops,
+        num_hosts=len(hosts),
+        series=queries,
+        pkt_size=pkt_size,
+    )
+
     collector = Collector(
         hosts=hosts,
         dispatcher=dispatcher,
@@ -389,6 +397,7 @@ async def _main(
         series=queries,
         send_wait=sendwait,
         sim_probes=sim_queries,
+        finished_callback=reporter.complete_timeout_callback,
     )
     scheduler = Scheduler(
         hosts=hosts,
@@ -406,10 +415,14 @@ async def _main(
         max_hops=max_hops,
         first_ttl=first_ttl,
         finished_callback=collector.start_timeout,
+        progress_callback=reporter.update_probes_callback,
     )
 
-    _, _, collected = await asyncio.gather(
-        scheduler.run(), dispatcher.run(), collector.run()
+    _, _, _, collected = await asyncio.gather(
+        scheduler.run(),
+        dispatcher.run(),
+        reporter.run(),
+        collector.run(),
     )
     # loop.run_until_complete(loop.shutdown_asyncgens())
 

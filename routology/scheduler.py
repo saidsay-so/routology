@@ -41,7 +41,8 @@ class Scheduler:
         sim_probes: int,
         send_wait: float,
         first_ttl: int,
-        finished_callback: Callable[[], None],
+        finished_callback: Callable[[], None] = lambda: None,
+        progress_callback: Callable[[int], None] = lambda _: None,
         logger: Optional[Logger] = None,
     ):
         self._subscription = dispatcher.subscribe()
@@ -53,6 +54,7 @@ class Scheduler:
         self._sim_probes = sim_probes
         self._hosts = {host for host in hosts}
         self._finished_callback = finished_callback
+        self._progress_callback = progress_callback
         self._logger = logger or getLogger(__name__)
 
     async def run(self):
@@ -85,7 +87,7 @@ class Scheduler:
             await self._sender.send_probes(
                 [probe for probe in probe_batch if probe.host in self._hosts],
             )
-            await sleep(self._send_wait)
+            self._progress_callback(self._sim_probes)
             # We need to check if there are any hosts left to probe
             if not self._hosts:
                 break

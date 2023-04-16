@@ -12,7 +12,7 @@ from routology.utils import HostID, dynamic_timeout
 
 if TYPE_CHECKING:
     from ipaddress import IPv4Address, IPv6Address
-    from typing import Optional
+    from typing import Optional, Callable
 
     from routology.dispatcher import DispatchedProbeReport, Dispatcher
 
@@ -55,6 +55,8 @@ class Collector:
 
     _logger: Logger
 
+    _new_timeout_callback: Callable[[float], None]
+
     def __init__(
         self,
         hosts: list[HostID],
@@ -64,6 +66,8 @@ class Collector:
         series: int,
         send_wait: float,
         sim_probes: int,
+        new_timeout_callback: Callable[[float], None] = lambda _: None,
+        finished_callback: Callable[[], None] = lambda: None,
         logger: Optional[Logger] = None,
     ):
         self._hosts = {
@@ -81,6 +85,9 @@ class Collector:
 
         self._series = series
 
+        self._new_timeout_callback = new_timeout_callback
+        self._new_timeout_callback(self._delay)
+        self._finished_callback = finished_callback
         self._logger = logger or getLogger(__name__)
 
     def _collect(self, report: DispatchedProbeReport):
@@ -138,13 +145,14 @@ class Collector:
             diff = timedelta(milliseconds=report.rtt * log(report.ttl))
             actual_diff = self._timeout - datetime.now()
             if actual_diff < diff:
-                self._timeout += diff - actual_diff
+                self._timeout += min(diff - actual_diff, timedelta(seconds=3))
+                self._new_timeout_callback(self.get_timeout())
 
     async def run(self) -> dict[HostID, HostReport]:
         """Runs the collector."""
         try:
             async with dynamic_timeout(
-                self._subscription, self.get_timeout
+                self._subscription, self.get_timeout, lambda: self._timeout is not None
             ).stream() as subscription:
                 async for report in subscription:
                     self._logger.debug("Next timeout: %.2lf", self.get_timeout())
@@ -158,4 +166,5 @@ class Collector:
         finally:
             self._logger.info("Collector finished")
             await self._dispatcher.close()
+            self._finished_callback()
             return self.get_report()
