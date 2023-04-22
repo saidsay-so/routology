@@ -44,6 +44,17 @@ to the set number of simultaneous packets to send, and reports the number it has
 
 ## Options
 
+* **-m, --max-hops**: The maximum number of hops to try before giving up. Defaults to 30.
+* **-f, --first-ttl**: The initial time-to-live (TTL) value. Defaults to 1.
+* **-U, --udp-port**: The port to send probes to. Defaults to 33434.
+* **-T, --tcp-port**: The port to send probes to. Defaults to 80.
+* **-N, --sim-queries**: The number of simultaneous queries to send. Defaults to 16.
+* **-n, --no-dns**: Do not resolve hostnames.
+* **-w, --wait-time**: The number of seconds to wait for a response. Defaults to 3.
+* **-q, --queries**: The number of series to send to each host. Defaults to 1.
+* **--output-text-file**: The path to the file where the results will be saved in text format.
+* **--output-image-file**: The path to the file where the results will be saved in graph image.
+
 ## License
 
 routology is licensed under the MIT License. See the LICENSE file for details.
