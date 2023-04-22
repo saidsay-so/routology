@@ -27,6 +27,23 @@ routology --help
 
 By default, routology sends UDP packets starting from port 33434, TCP packets to port 80, and ICMP packets each with a TTL of 1, and increments the TTL by 1 for each subsequent probe until it reaches the destination or a maximum TTL value of 64. You can customize the probe type, port, initial TTL, and maximum TTL using command-line options.
 
+## How it works
+
+Routology is built around an asynchronous architecture to allow receiving and sending a massive number of packets at the same time.
+It uses the asyncio module to create a pool of tasks that send packets and receive responses, and a queue to store the packets that are waiting to be sent.
+The main loop of the program is responsible for printing the results of the packets that have been received and creating the graph of the route.
+
+The main components of the program are:
+
+* **Scheduler**: The scheduler is responsible for sending probes while keeping only hosts which are not receiving responses. It creates a batch of packets tasks according
+to the set number of simultaneous packets to send, and reports the number it has sent to a callback function which the main loop uses to print the progress.
+
+* **Collector**: The collector is responsible for receiving packets and storing them in a manner that allows the main loop to print the results and draw the graph.
+
+* **Dispatcher**: The dispatcher is responsible for sending responses to the scheduler and collector.
+
+## Options
+
 ## License
 
 routology is licensed under the MIT License. See the LICENSE file for details.
