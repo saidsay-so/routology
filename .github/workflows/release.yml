@@ -10,7 +10,12 @@ jobs:
 
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          [
+            { os: ubuntu-latest, exe: routology, final: routology.linux },
+            { os: macos-latest, exe: routology, final: routology.mac },
+            { os: windows-latest, exe: routology.exe, final: routology.exe },
+          ]
       fail-fast: false
 
     runs-on: ${{ matrix.os }}
@@ -33,7 +38,7 @@ jobs:
           pip install poetry
           poetry config virtualenvs.in-project true
           poetry install -vv --with build
-      
+
       - name: Build for the platform
         shell: bash
         run: |
@@ -43,6 +48,6 @@ jobs:
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: dist/*
+          file: dist/${{ matrix.exe }}
+          asset_name: ${{ matrix.final }}
           tag: ${{ github.ref }}
-          file_glob: true
