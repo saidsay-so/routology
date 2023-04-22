@@ -130,7 +130,7 @@ def main(
         help="""Wait responses for WAIT seconds after sending all probes (defaults to 5 seconds).""",
     ),
     queries: int = typer.Option(
-        3, "-q", "--queries", help="Set the number of series of probes per hop"
+        1, "-q", "--queries", help="Set the number of series of probes per hop"
     ),
     # direct: bool = typer.Option(
     #     False,
@@ -205,6 +205,10 @@ def main(
         "routology.txt",
         help="The output text file to write to",
     ),
+    output_image_file: str = typer.Option(
+        "routology.png",
+        help="The output text file to write to",
+    ),
 ) -> None:
     if first_ttl > max_hops:
         typer.echo("First TTL must be less than or equal to max hops")
@@ -258,6 +262,7 @@ def main(
             hosts_file=hosts_file,
             pkt_size=size,
             output_text_file=output_text_file,
+            output_image_file=output_image_file,
         )
     )
 
@@ -412,6 +417,7 @@ async def _main(
     # mtu: bool,
     # back: bool,
     output_text_file: str,
+    output_image_file: str,
     hosts_file: str,
     pkt_size: int,
 ) -> None:
@@ -541,6 +547,7 @@ async def _main(
     )
 
     plt.show()
+    plt.savefig(output_image_file)
 
 
 app()
