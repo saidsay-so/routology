@@ -35,7 +35,7 @@ jobs:
       - name: Build for the platform
         shell: bash
         run: |
-          python bundle.py
+          poetry run python bundle.py
 
       - name: Upload binaries to release
         uses: svenstaro/upload-release-action@v2
