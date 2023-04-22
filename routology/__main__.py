@@ -112,7 +112,7 @@ def main(
         False, "-n", help="Do not resolve addresses to hostnames"
     ),
     tcp_port: int = typer.Option(
-        33434, "-T", "--tcp-port", help="Set the destination port for TCP SYN probes"
+        80, "-T", "--tcp-port", help="Set the destination port for TCP SYN probes"
     ),
     udp_port: int = typer.Option(
         33434, "-U", "--udp-port", help="Set the destination port for UDP probes"
