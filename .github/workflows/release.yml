@@ -5,11 +5,13 @@ on:
 
 jobs:
   build-executable:
+    permissions: write-all
     name: "Build the platform executable"
 
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+      fail-fast: false
 
     runs-on: ${{ matrix.os }}
     steps:
