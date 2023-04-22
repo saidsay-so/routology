@@ -43,3 +43,4 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: dist/*
           tag: ${{ github.ref }}
+          file_glob: true
