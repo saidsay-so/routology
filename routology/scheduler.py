@@ -24,6 +24,7 @@ class Scheduler:
     _subscription: AsyncGenerator[DispatchedProbeReport, None]
     _sender: Sender
     _hosts: set[HostID]
+    _stop_send: dict[ProbeType, set[HostID]]
     _series: int
     _max_hops: int
     _sim_probes: int
@@ -54,6 +55,7 @@ class Scheduler:
         self._first_ttl = first_ttl
         self._sim_probes = sim_probes
         self._hosts = {host for host in hosts}
+        self._stop_send = {ptype: set() for ptype in ProbeType}
         self._finished_callback = finished_callback
         self._progress_callback = progress_callback
         self._logger = logger or getLogger(__name__)
@@ -69,28 +71,39 @@ class Scheduler:
     async def report_task(self):
         """Receive reports from the dispatcher and update the hosts list."""
         async for report in self._subscription:
-            if report.final and report.host_id in self._hosts:
-                self._hosts.remove(report.host_id)
+            if (
+                report.final
+                and report.series == self._series - 1
+                and report.host_id in self._hosts
+            ):
+                self._stop_send[report.probe_type].add(report.host_id)
 
     async def send_task(self):
         """Send probes to hosts."""
+        reqs = (
+            SendRequest(ttl, serie, host, probe_type)
+            for ttl, host, serie, probe_type in product(
+                range(self._first_ttl, self._max_hops + 1),
+                self._hosts,
+                range(0, self._series),
+                (ProbeType.UDP, ProbeType.TCP, ProbeType.ICMP),
+            )
+        )
+
         for probe_batch in batched(
-            (
-                SendRequest(ttl, serie, host, probe_type)
-                for ttl, host, serie, probe_type in product(
-                    range(self._first_ttl, self._max_hops + 1),
-                    self._hosts,
-                    range(0, self._series),
-                    (ProbeType.UDP, ProbeType.TCP, ProbeType.ICMP),
-                )
-            ),
+            reqs,
             self._sim_probes,
         ):
+            probes = [
+                probe
+                for probe in probe_batch
+                if probe.host not in self._stop_send[probe.probe_type]
+            ]
             await self._sender.send_probes(
-                [probe for probe in probe_batch if probe.host in self._hosts],
+                probes,
                 pkt_send_time=self._send_wait,
             )
-            self._progress_callback(self._sim_probes)
+            self._progress_callback(len(probes))
             # We need to check if there are any hosts left to probe
             if not self._hosts:
                 break

@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 async def dynamic_timeout(
     source: AsyncIterable[T],
     timeout: Callable[[], float],
-    should_exit: Callable[[], None],
+    should_exit: Callable[[], bool],
 ) -> AsyncIterable[T]:
     """Yield items from an async iterable with a dynamic timeout.
 
@@ -32,8 +32,10 @@ async def dynamic_timeout(
             try:
                 item = await wait_for(anext(streamer), timeout())
             except StopAsyncIteration:
+                break
+            except TimeoutError as timeout_error:
                 if should_exit():
-                    break
+                    raise timeout_error
             else:
                 yield item
 

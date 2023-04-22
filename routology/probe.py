@@ -2,7 +2,6 @@ from enum import Enum, auto
 
 
 class ProbeType(Enum):
+    UDP = auto()
     TCP = auto()
     ICMP = auto()
-    ICMP6 = auto()
-    UDP = auto()

@@ -2,7 +2,6 @@ from __future__ import annotations
 import asyncio
 
 from dns.asyncresolver import Resolver
-from dns.resolver import LRUCache
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -104,16 +103,15 @@ class HostTextFormatter:
         ttl: int,
         hop: ProbeResponse,
     ):
-        if self._no_dns:
-            node_name = None
-        else:
+        node_name = None
+        if not self._no_dns:
             try:
                 res = await self._resolver.resolve_address(
                     str(hop.node_ip), lifetime=10
                 )
                 node_name = res[0].target.to_unicode(omit_final_dot=True)  # type: ignore
             except Exception:
-                node_name = None
+                pass
 
         setattr(
             self.lines[ttl].series[serie_num],
@@ -140,8 +138,8 @@ class TextOutputFormatter:
         collected: dict[HostID, HostReport],
         series: int,
         resolver: Resolver,
+        loop: AbstractEventLoop,
         no_dns: bool = False,
-        loop: AbstractEventLoop = asyncio.get_event_loop(),
     ):
         self.resolver = resolver
         self.formatters = [
