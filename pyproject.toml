@@ -16,6 +16,7 @@ pyvis = "^0.3.2"
 matplotlib = "^3.7.1"
 dnspython = "^2.3.0"
 rich = "^13.3.4"
+netgraph = "^4.12.8"
 
 [tool.poetry.scripts]
 routology = "routology.__main__:app"
