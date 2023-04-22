@@ -36,8 +36,9 @@ jobs:
       - name: Set up the project
         run: |
           pip install poetry
+          pip install pyinstaller
           poetry config virtualenvs.in-project true
-          poetry install -vv --with build
+          poetry install -vv --without dev
 
       - name: Build for the platform
         shell: bash
