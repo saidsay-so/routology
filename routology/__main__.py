@@ -4,14 +4,14 @@ from ipaddress import ip_address
 import asyncio
 from random import randint
 import os
+import csv
 
-
-import matplotlib.pyplot as plt
+from netgraph import InteractiveGraph
 
 
 from routology.collector import Collector
 from routology.dispatcher import Dispatcher
-from routology.outputs.theOneGraph import draw_graph
+from routology.outputs.graph import draw_graph
 from routology.outputs.text import TextOutputFormatter
 from routology.reporter import Reporter
 from routology.scheduler import Scheduler
@@ -27,6 +27,9 @@ from typing import TYPE_CHECKING, Optional
 
 from dns.asyncresolver import Resolver
 from dns.resolver import LRUCache
+import matplotlib.pyplot as plt
+from rich.progress import track
+import networkx as nx
 
 if TYPE_CHECKING:
     from typing import AsyncGenerator
@@ -264,19 +267,36 @@ def get_hosts(hosts_file: str) -> list[HostID]:
 
     hosts = set()
     logger = logging.getLogger(__name__)
+
     with open(hosts_file) as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            try:
-                hosts.add(HostID.from_addr(ip_address(line)))
-            except ValueError:
-                # TODO: IPv6 support?
-                hosts.add(HostID.from_name(line))
-            except:
-                logger.warning(f"Invalid host: {line}")
-                raise
+        if hosts_file.endswith(".csv"):
+            reader = csv.reader(f)
+            for row in reader:
+                if not row:
+                    continue
+                for host in row:
+                    try:
+                        hosts.add(HostID.from_addr(ip_address(row[0])))
+                    except ValueError:
+                        # TODO: IPv6 support?
+                        hosts.add(HostID.from_name(host))
+                    except:
+                        logger.warning(f"Invalid host: {host}")
+                        raise
+
+        else:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                try:
+                    hosts.add(HostID.from_addr(ip_address(line)))
+                except ValueError:
+                    # TODO: IPv6 support?
+                    hosts.add(HostID.from_name(line))
+                except:
+                    logger.warning(f"Invalid host: {line}")
+                    raise
 
     return list(hosts)
 
@@ -348,8 +368,8 @@ async def map_hops(
         response = getattr(hop, attr, None)
         if resolver and response:
             try:
-                res = await resolver.resolve_address(response.node_ip)
-                name = res[0].target  # type: ignore
+                res = await resolver.resolve_address(str(response.node_ip))
+                name = res[0].target.to_unicode(omit_final_dot=True)  # type: ignore
             except Exception:
                 name = str(response.node_ip)
         else:
@@ -484,21 +504,43 @@ async def _main(
     with open(output_text_file, "w") as f:
         f.write(str(text_output))
 
-    for attr, title in (
-        ("udp_probe", "UDP"),
-        ("tcp_probe", "TCP"),
-        ("icmp_probe", "ICMP"),
-    ):
-        hops = [
-            [
-                hop
-                async for hop in map_hops(serie, attr, resolver if not no_dns else None)
-            ]
-            for host in collected
-            for serie in collected[host].series
-        ]
+    inc = Incrementer()
 
-    plt.show(block=True)
+    G = nx.DiGraph()
+    base_node = f"Source"
+    G.add_node(base_node)
+
+    for host in track(collected):
+        for attr, title in (
+            ("udp_probe", "UDP"),
+            ("tcp_probe", "TCP"),
+            ("icmp_probe", "ICMP"),
+        ):
+            hops = [
+                [
+                    hop
+                    async for hop in map_hops(
+                        serie, attr, resolver if not no_dns else None
+                    )
+                ]
+                for serie in collected[host].series
+            ]
+
+            draw_graph(G, base_node, hops, title, host, inc)
+
+    lens = nx.get_edge_attributes(G, "length")
+    colors = nx.get_edge_attributes(G, "color")
+    plot_instance = InteractiveGraph(
+        G,
+        node_labels=True,
+        node_label_offset=0.05,
+        arrows=True,
+        node_layout="geometric",
+        node_layout_kwargs=dict(edge_length=lens),
+        edge_color=colors,
+    )
+
+    plt.show()
 
 
 app()
