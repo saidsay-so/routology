@@ -1,12 +1,15 @@
 # Routology
 
 routology is a command-line tool written in Python that mimics the functionality of the traceroute command, but sends UDP, TCP SYN, and ICMP probes each time. It has the same options as traceroute and is designed to help you diagnose network problems by showing the path that packets take from your computer to a destination host, and the latency or loss rate at each hop.
-Installation
+
+![graph](graph.png)
+
+## Installation
 
 To use routology, you need to have Python 3 installed on your system, or use the provided executable. You can then install routology using pip:
 
 ```bash
-pip install routology
+pip install git+https://github.com/saidsay-so/routology.git
 ```
 
 ## Usage
