@@ -28,7 +28,7 @@ optional = true
 pyinstaller = "^5.7.0"
 
 [tool.poetry.group.dev.dependencies]
-black = "^23.1.0"
+black = "^24.3.0"
 pytest = "^7.2.2"
 kathara = { version = "^3.5.5" } #, extras = ["pyuv"]
 pre-commit = "^3.2.0"
