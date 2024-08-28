@@ -14,7 +14,7 @@ scapy = "^2.5.0"
 more-itertools = "^9.1.0"
 pyvis = "^0.3.2"
 matplotlib = "^3.7.1"
-dnspython = "^2.3.0"
+dnspython = "^2.6.1"
 rich = "^13.3.4"
 netgraph = "^4.12.8"
 
